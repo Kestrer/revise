@@ -2,10 +2,10 @@ pub mod term;
 pub mod ui;
 
 use crate::term::{deserialize_terms, Term};
-use colored::Colorize;
 use rand::{Rng, seq::SliceRandom};
-use rustyline::error::ReadlineError;
 use serde::Deserialize;
+use std::iter::FromIterator;
+use crossterm::style::{style, Colorize};
 
 #[derive(Clone, Deserialize)]
 pub struct Set {
@@ -14,8 +14,8 @@ pub struct Set {
     terms: Vec<Term>,
 }
 
-pub trait Tester: Fn(&[Term], usize) -> Result<bool, ReadlineError> {}
-impl<T: Fn(&[Term], usize) -> Result<bool, ReadlineError>> Tester for T {}
+pub trait Tester: Fn(&[Term], usize) -> Result<bool, anyhow::Error> {}
+impl<T: Fn(&[Term], usize) -> Result<bool, anyhow::Error>> Tester for T {}
 
 impl Set {
     pub fn new(name: String) -> Set {
@@ -25,7 +25,7 @@ impl Set {
         }
     }
 
-    pub fn push_set(&mut self, mut set: Set) {
+    pub fn join(&mut self, mut set: Set) {
         self.name.push_str(" + ");
         self.name.push_str(&set.name);
         self.terms.append(&mut set.terms);
@@ -35,7 +35,7 @@ impl Set {
         self.terms.shuffle(&mut rand::thread_rng());
     }
 
-    pub fn test<T: Tester>(&self, tester: T) -> Result<Vec<bool>, ReadlineError> {
+    pub fn test<T: Tester>(&self, tester: T) -> Result<Vec<bool>, anyhow::Error> {
         let mut results = Vec::with_capacity(self.terms.len());
         let mut correct = 0;
         let mut incorrect = 0;
@@ -46,11 +46,9 @@ impl Set {
             ui::show_separator()?;
             println!(
                 "{} {} {}",
-                correct.to_string().bright_green(),
-                incorrect.to_string().bright_red(),
-                (self.terms.len() - correct - incorrect)
-                    .to_string()
-                    .bright_black()
+                style(correct).green(),
+                style(incorrect).red(),
+                style(self.terms.len() - correct - incorrect).dark_grey(),
             );
             ui::show_separator()?;
             println!();
@@ -82,7 +80,7 @@ impl Set {
         Ok(results)
     }
 
-    pub fn rounds<T: Tester>(&self, tester: T) -> Result<(), ReadlineError> {
+    pub fn rounds<T: Tester>(&self, tester: T) -> Result<(), anyhow::Error> {
         let mut round = 0;
         let mut set = self.clone();
         while !set.terms.is_empty() {
@@ -100,7 +98,7 @@ impl Set {
         Ok(())
     }
 
-    pub fn learn(&self, stages: &[Box<dyn Tester>]) -> Result<(), ReadlineError> {
+    pub fn learn(&self, stages: &[Box<dyn Tester>]) -> Result<(), anyhow::Error> {
         let mut rand = rand::thread_rng();
         let mut term_stages = vec![0; self.terms.len()];
 
@@ -122,11 +120,11 @@ impl Set {
             ui::clear()?;
             println!("{}", self.name);
             ui::show_separator()?;
-            print!("{} ", term_stages.iter().filter(|&&s| s == 0).count().to_string().bright_black());
+            print!("{} ", style(term_stages.iter().filter(|&&s| s == 0).count()).red());
             for stage in 1..stages.len() {
                 print!("{} ", term_stages.iter().filter(|&&s| s == stage).count());
             }
-            print!("{}", term_stages.iter().filter(|&&s| s == stages.len()).count().to_string().bright_green());
+            print!("{}", style(term_stages.iter().filter(|&&s| s == stages.len()).count()).green());
             println!();
             ui::show_separator()?;
             println!();
@@ -138,5 +136,16 @@ impl Set {
             }
         }
         Ok(())
+    }
+}
+
+impl FromIterator<Set> for Option<Set> {
+    fn from_iter<T: IntoIterator<Item = Set>>(iter: T) -> Self {
+        let mut iter = iter.into_iter();
+        let mut set = iter.next()?;
+        for item in iter {
+            set.join(item);
+        }
+        Some(set)
     }
 }

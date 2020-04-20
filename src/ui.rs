@@ -1,48 +1,31 @@
-use colored::Colorize;
-use rustyline::{error::ReadlineError, EditMode, Editor};
-use std::io::{self, Write};
-use termion::event::Key;
-use termion::input::TermRead;
-use termion::raw::IntoRawMode;
-use termion::{clear, cursor};
+use crossterm::style::Colorize;
+use rustyline::{EditMode, Editor};
+use std::io::{self, Write, ErrorKind};
+use crossterm::{execute, cursor};
+use crossterm::terminal::{self, enable_raw_mode, disable_raw_mode, Clear, ClearType};
+use crossterm::event::{self, Event, KeyEvent, KeyCode, KeyModifiers};
 
-pub fn get_key() -> Result<Key, io::Error> {
-    let key = {
-        let mut stdout = io::stdout().into_raw_mode()?;
-        stdout.flush()?;
-        io::stdin()
-            .keys()
-            .next()
-            .ok_or(io::ErrorKind::UnexpectedEof)??
+pub fn get_key() -> Result<KeyEvent, anyhow::Error> {
+    enable_raw_mode()?;
+    let key = loop {
+        if let Event::Key(key) = event::read()? {
+            break key;
+        }
     };
-    if key == Key::Ctrl('c') {
-        return Err(io::ErrorKind::Interrupted.into());
+    disable_raw_mode()?;
+    if key == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL) {
+        return Err(anyhow::Error::from(io::Error::from(ErrorKind::Interrupted)));
     }
     Ok(key)
 }
 
-pub fn get_one_key() -> Result<Key, io::Error> {
+pub fn get_key_ln() -> Result<KeyEvent, anyhow::Error> {
     let key = get_key()?;
     println!();
     Ok(key)
 }
 
-//pub fn get_key_where<C>(mut condition: C) -> Result<Key, io::Error>
-//where
-//    C: FnMut(Key) -> bool,
-//{
-//    loop {
-//        let key = get_key()?;
-//        if condition(key) {
-//            return Ok(key);
-//        }
-//    }
-//}
-
-pub fn get_key_map<C, R>(mut condition: C) -> Result<R, io::Error>
-where
-    C: FnMut(Key) -> Option<R>,
-{
+pub fn get_key_map<R>(mut condition: impl FnMut(KeyEvent) -> Option<R>) -> Result<R, anyhow::Error> {
     loop {
         if let Some(r) = condition(get_key()?) {
             println!();
@@ -51,13 +34,14 @@ where
     }
 }
 
-pub fn wait_key() -> Result<(), io::Error> {
-    print!("\n...");
+pub fn wait_key() -> Result<(), anyhow::Error> {
+    print!("\nPress any key to continue...");
+    io::stdout().flush()?;
     get_key()?;
     Ok(())
 }
 
-pub fn get_line(prompt: &str) -> Result<String, ReadlineError> {
+pub fn get_line(prompt: &str) -> Result<String, anyhow::Error> {
     let mut reader: Editor<()> = Editor::with_config(
         rustyline::Config::builder()
             .edit_mode(EditMode::Vi)
@@ -67,14 +51,14 @@ pub fn get_line(prompt: &str) -> Result<String, ReadlineError> {
     Ok(reader.readline(prompt)?)
 }
 
-pub fn clear() -> Result<(), io::Error> {
-    print!("{}{}", clear::All, cursor::Goto(1, 1));
+pub fn clear() -> Result<(), anyhow::Error> {
+    execute!(io::stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))?;
     Ok(())
 }
 
-pub fn show_separator() -> Result<(), io::Error> {
-    for _ in 0..termion::terminal_size()?.0 {
-        print!("{}", "-".bright_black());
+pub fn show_separator() -> Result<(), anyhow::Error> {
+    for _ in 0..terminal::size()?.0 {
+        print!("{}", "-".dark_grey());
     }
     Ok(())
 }

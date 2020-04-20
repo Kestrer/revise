@@ -1,13 +1,13 @@
 use crate::ui;
 use arrayvec::ArrayVec;
-use colored::Colorize;
 use rand::Rng;
 use regex::Regex;
-use rustyline::error::ReadlineError;
 use serde::de::{Deserializer, Error, MapAccess, Visitor};
 use std::convert::TryInto;
 use std::{cmp, fmt};
-use termion::event::Key;
+use std::io::{self, Write};
+use crossterm::style::{Colorize, Styler, style};
+use crossterm::event::{KeyEvent, KeyCode, KeyModifiers};
 
 #[derive(Clone)]
 pub struct Term {
@@ -23,14 +23,15 @@ impl Term {
         })
     }
 
-    pub fn write(&self, inverted: bool) -> Result<bool, ReadlineError> {
+    pub fn write(&self, inverted: bool) -> Result<bool, anyhow::Error> {
         let (term, definition, prompt) = if inverted {
             (&self.definition, &self.term, "Definition: ")
         } else {
             (&self.term, &self.definition, "Term: ")
         };
-        println!("\n  {}\n", term.as_str().bold());
-        let line = ui::get_line(&prompt.bright_black().to_string())?;
+        println!("\n  {}\n", style(term.as_str()).bold());
+
+        let line = ui::get_line(&prompt.dark_grey().to_string())?;
 
         let mut right = if definition.as_str() == line {
             true
@@ -41,14 +42,14 @@ impl Term {
         };
 
         if !right {
-            println!("\n  {}\n", "Incorrect".bright_red().bold());
-            println!(
-                "{}{}",
-                prompt.bright_black(),
-                definition.as_str().bright_green()
+            print!(
+                "\n  {}\n\n{}{}\n\noverride (c)orrect, or continue...",
+                "Incorrect".red().bold(),
+                prompt.dark_grey(),
+                style(definition.as_str()).green(),
             );
-            print!("\noverride (c)orrect, or continue...");
-            if let Key::Char('c') = ui::get_one_key()? {
+            io::stdout().flush()?;
+            if ui::get_key_ln()? == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE) {
                 right = true;
             }
         }
@@ -56,15 +57,15 @@ impl Term {
         Ok(right)
     }
 
-    pub fn write_definition(terms: &[Self], i: usize) -> Result<bool, ReadlineError> {
+    pub fn write_definition(terms: &[Self], i: usize) -> Result<bool, anyhow::Error> {
         terms[i].write(false)
     }
 
-    pub fn write_term(terms: &[Self], i: usize) -> Result<bool, ReadlineError> {
+    pub fn write_term(terms: &[Self], i: usize) -> Result<bool, anyhow::Error> {
         terms[i].write(true)
     }
 
-    pub fn choose(terms: &[Self], answer: usize, inverted: bool) -> Result<bool, ReadlineError> {
+    pub fn choose(terms: &[Self], answer: usize, inverted: bool) -> Result<bool, anyhow::Error> {
         let mut rng = rand::thread_rng();
 
         let mut options = ArrayVec::<[&Self; 4]>::new();
@@ -80,13 +81,13 @@ impl Term {
         let answer_option = rng.gen_range(0, options.len() + 1);
         options.insert(answer_option, &terms[answer]);
 
-        println!("\n  {}\n", terms[answer].term.as_str().bold());
+        println!("\n   {}\n", style(terms[answer].term.as_str()).bold());
 
         for (option, term) in options.iter().enumerate() {
             println!(
                 "{}{} {}",
-                option.to_string().bright_black(),
-                ":".bright_black(),
+                style(option).dark_grey(),
+                ":".dark_grey(),
                 if inverted {
                     &term.term
                 } else {
@@ -97,12 +98,14 @@ impl Term {
 
         print!(
             "\n{}{}{} ",
-            "0..".bright_black(),
-            (options.len() - 1).to_string().bright_black(),
-            ":".bright_black()
+            "0..".dark_grey(),
+            style(options.len() - 1).dark_grey(),
+            ":".dark_grey()
         );
+        io::stdout().flush()?;
+
         let num = ui::get_key_map(|key| match key {
-            Key::Char(c) => c.to_digit(10).and_then(|n| {
+            KeyEvent { code: KeyCode::Char(c), modifiers: KeyModifiers::NONE } => c.to_digit(10).and_then(|n| {
                 let n: usize = n.try_into().unwrap();
                 if n < options.len() {
                     Some(n)
@@ -115,19 +118,19 @@ impl Term {
         let mut right = num == answer_option;
 
         if !right {
-            println!("\n  {}\n", "Incorrect".bright_red().bold());
-            println!(
-                "{}",
-                if inverted {
-                    &terms[answer].term
-                } else {
-                    &terms[answer].definition
-                }
-                .as_str()
-                .bright_green()
+            print!(
+                "\n   {}\n\n{}\n\noverride (c)orrect, or continue...",
+                "Incorrect".red().bold(),
+                style(if inverted {
+                        &terms[answer].term
+                    } else {
+                        &terms[answer].definition
+                    }
+                    .as_str()
+                ).green(),
             );
-            print!("\noverride (c)orrect, or continue...");
-            if let Key::Char('c') = ui::get_one_key()? {
+            io::stdout().flush()?;
+            if ui::get_key_ln()? == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE) {
                 right = true;
             }
         }
@@ -135,11 +138,11 @@ impl Term {
         Ok(right)
     }
 
-    pub fn choose_definition(terms: &[Self], i: usize) -> Result<bool, ReadlineError> {
+    pub fn choose_definition(terms: &[Self], i: usize) -> Result<bool, anyhow::Error> {
         Self::choose(terms, i, false)
     }
 
-    pub fn choose_term(terms: &[Self], i: usize) -> Result<bool, ReadlineError> {
+    pub fn choose_term(terms: &[Self], i: usize) -> Result<bool, anyhow::Error> {
         Self::choose(terms, i, true)
     }
 }

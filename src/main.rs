@@ -1,12 +1,13 @@
 #![deny(warnings)]
+#![warn(clippy::pedantic)]
 
 use revise::term::Term;
 use revise::Set;
-use std::fs::File;
-use std::io::BufReader;
+use std::fs;
 use clap::{App, Arg};
+use anyhow::Context;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), anyhow::Error> {
     let matches = App::new("revise")
         .version("0.1")
         .about("Utility to help students revise.")
@@ -40,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .get_matches();
 
-    let mut files = matches.values_of("sets").unwrap();
+    let files = matches.values_of("sets").unwrap();
     let mode = matches.value_of("mode").unwrap();
     let tester = match (matches.value_of("type").unwrap(), matches.is_present("inverted")) {
         ("choose", false) => Term::choose_definition,
@@ -50,10 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => unreachable!(),
     };
 
-    let mut set: Set = serde_json::from_reader(BufReader::new(File::open(&files.next().unwrap())?))?;
-    for file in files {
-        set.push_set(serde_json::from_reader(BufReader::new(File::open(&file)?))?);
-    }
+    let mut set: Set = files.map(|filename| Ok(serde_json::from_str(&fs::read_to_string(filename).context("Failed to open set")?).context("Set format invalid")?)).collect::<Result<Option<Set>, anyhow::Error>>()?.unwrap();
 
     match mode {
         "test" => {
