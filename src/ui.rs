@@ -1,64 +1,137 @@
-use crossterm::style::Colorize;
-use rustyline::{EditMode, Editor};
-use std::io::{self, Write, ErrorKind};
-use crossterm::{execute, cursor};
-use crossterm::terminal::{self, enable_raw_mode, disable_raw_mode, Clear, ClearType};
-use crossterm::event::{self, Event, KeyEvent, KeyCode, KeyModifiers};
+use std::convert::TryFrom;
+use std::fmt::{self, Display, Formatter};
+use std::io;
 
-pub fn get_key() -> Result<KeyEvent, anyhow::Error> {
-    enable_raw_mode()?;
-    let key = loop {
+use anyhow::bail;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::queue;
+use crossterm::{
+    cursor,
+    terminal::{self, ClearType},
+};
+use unicode_width::UnicodeWidthStr as _;
+
+use Direction::{Left, Right};
+
+pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
+    let (start_x, start_y) = cursor::position()?;
+    let mut line = String::new();
+    let mut position = 0;
+
+    loop {
+        let key_event = read_key()?;
+        match (key_event.code, key_event.modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                line.insert(position, c);
+                position += c.len_utf8();
+            }
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) | (KeyCode::Backspace, _) => {
+                if next_boundary(Left, &mut position, &line) {
+                    line.remove(position);
+                }
+            }
+            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                let remove_from = line[..position]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| c.is_whitespace())
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                line.replace_range(remove_from..position, "");
+                position = remove_from;
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                line.clear();
+                position = 0;
+            }
+            (KeyCode::Delete, _) => {
+                if position < line.len() {
+                    line.remove(position);
+                }
+            }
+            (KeyCode::Left, _) => {
+                next_boundary(Left, &mut position, &line);
+            }
+            (KeyCode::Right, _) => {
+                next_boundary(Right, &mut position, &line);
+            }
+            (KeyCode::Up, _) | (KeyCode::Home, _) => position = 0,
+            (KeyCode::Down, _) | (KeyCode::End, _) => position = line.len(),
+            (KeyCode::Enter, _) => break,
+            _ => (),
+        }
+
+        queue!(
+            out,
+            cursor::MoveTo(start_x, start_y),
+            terminal::Clear(ClearType::UntilNewLine)
+        )?;
+        out.write_all(line.as_bytes())?;
+        queue!(
+            out,
+            cursor::MoveTo(
+                start_x + u16::try_from(line[..position].width()).unwrap(),
+                start_y
+            )
+        )?;
+        out.flush()?;
+    }
+
+    queue!(
+        out,
+        cursor::MoveTo(start_x + u16::try_from(line.width()).unwrap(), start_y)
+    )?;
+    out.flush()?;
+
+    Ok(line)
+}
+
+pub(crate) fn read_key() -> anyhow::Result<KeyEvent> {
+    Ok(loop {
         if let Event::Key(key) = event::read()? {
+            if key.modifiers == KeyModifiers::CONTROL
+                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q'))
+            {
+                bail!(QuitEarly);
+            }
             break key;
         }
-    };
-    disable_raw_mode()?;
-    if key == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL) {
-        return Err(anyhow::Error::from(io::Error::from(ErrorKind::Interrupted)));
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct QuitEarly;
+
+impl Display for QuitEarly {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str("Quit early")
     }
-    Ok(key)
 }
 
-pub fn get_key_ln() -> Result<KeyEvent, anyhow::Error> {
-    let key = get_key()?;
-    println!();
-    Ok(key)
-}
+impl std::error::Error for QuitEarly {}
 
-pub fn get_key_map<R>(mut condition: impl FnMut(KeyEvent) -> Option<R>) -> Result<R, anyhow::Error> {
+fn next_boundary(direction: Direction, position: &mut usize, on: &str) -> bool {
+    if *position
+        == match direction {
+            Direction::Left => 0,
+            Direction::Right => on.len(),
+        }
+    {
+        return false;
+    }
+
     loop {
-        if let Some(r) = condition(get_key()?) {
-            println!();
-            return Ok(r);
+        match direction {
+            Direction::Left => *position -= 1,
+            Direction::Right => *position += 1,
+        }
+        if on.is_char_boundary(*position) {
+            break true;
         }
     }
 }
 
-pub fn wait_key() -> Result<(), anyhow::Error> {
-    print!("\nPress any key to continue...");
-    io::stdout().flush()?;
-    get_key()?;
-    Ok(())
-}
-
-pub fn get_line(prompt: &str) -> Result<String, anyhow::Error> {
-    let mut reader: Editor<()> = Editor::with_config(
-        rustyline::Config::builder()
-            .edit_mode(EditMode::Vi)
-            .max_history_size(0)
-            .build(),
-    );
-    Ok(reader.readline(prompt)?)
-}
-
-pub fn clear() -> Result<(), anyhow::Error> {
-    execute!(io::stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))?;
-    Ok(())
-}
-
-pub fn show_separator() -> Result<(), anyhow::Error> {
-    for _ in 0..terminal::size()?.0 {
-        print!("{}", "-".dark_grey());
-    }
-    Ok(())
+enum Direction {
+    Left,
+    Right,
 }

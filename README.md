@@ -5,44 +5,41 @@ Revise is a command line tool to help students revise - like Quizlet, but on the
 ## Installation
 
 You first need cargo installed. Then type:
-```
+```sh
 cargo install --git https://github.com/Koxiaet/revise
 ```
 
 ## Usage
 
-Each set is a JSON file with the following format:
+Each set is a [RON](https://github.com/ron-rs/ron) file, listing the name and the array of terms.
+For example:
+```ron
+(
+	name: "Example Set",
+	terms: [
+		("First term", "First definition"),
+		("Second term", "Second definition"),
+	],
+)
 ```
-{
-	"name": "The set name",
-	"terms": {
-		"First term": "First definition",
-		"Second term": "Second definition"
-	}
-}
-```
-Each term and definition is also a regex, so for example: `"water": "[Hh]2[Oo]"`.
 
-Type `revise -h` to get a list of options. Here is a more detailed description of each of the modes:
+Each term an definition is also a regex, although anchors are not supported. When testing the user
+on the terms a random string which matches the regex is used, and any answer which matches the regex
+is accepted.
 
-- Test mode shuffles all the terms and tests them all on you. At the end, you get a list of all your
-incorrect terms.
-- Rounds mode is like test mode, but at the end of each test you are tested on all the terms you got
-wrong in the previous test - like Quizlet's Write mode. It finishes once you get all the terms right.
-- In learn mode each term is placed into four different categories, and they all start off in the
-first. You are tested on a random term, and depending on which category that term is in the test is
-different. If you succeed the test the term moves up a category, if you fail it moves down a
-category. It finishes once all the terms are in the top category.
+`revise` stores a database of how well you know all the terms you have revised in
+`~/.local/share/revise/data.ron` on Linux, `~/Library/Application Support/revise/data.ron` on macOS
+and `~\AppData\Roaming\revise\data\data.ron` on Windows. You can edit this to manually tell `revise`
+your knowledge of a term, although it isn't formatted.
 
-Here is a more detailed description of each of the test types:
+When revising, `revise` chooses a random term from the set you are revising from. It looks up how
+well you know that term (which is rated from 0 to 3) in its database, and depending on that it tests
+you differently:
+- If it is 0 it gives you a multiple-choice from three other randomly chosen terms.
+- If it is 1 to 2 it tells you to write out your answer.
+- If it is 3 you aren't tested as you already know it perfectly.
+If you get it right the term will move up a category and if you get it wrong for the second time in
+a row it will move down. Once all terms are in the third category the revision session ends.
 
-- Write mode prompts you with the term regex, and you have to enter either the definition regex or
-something that matches the definition regex. The terms and definitions are swapped if you enable the
-`--inverted` flag.
-- Choose mode prompts you with the term regex, and gives you four (or less if the set is too small)
-possible options to choose from. You press 0, 1, 2 or 3 to choose. The terms and definitions are
-swapped if you enable the `--inverted` flag.
-
-## License
-
-This is dual-licensed under MIT OR Apache-2.0.
+When a set is opened, all terms in that set are capped at category 2, to prevent revision sessions
+that instantly end.
