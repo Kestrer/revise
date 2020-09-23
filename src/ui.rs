@@ -35,8 +35,7 @@ pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
                     .char_indices()
                     .rev()
                     .find(|(_, c)| c.is_whitespace())
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
+                    .map_or(0, |(i, _)| i);
                 line.replace_range(remove_from..position, "");
                 position = remove_from;
             }
@@ -131,6 +130,7 @@ fn next_boundary(direction: Direction, position: &mut usize, on: &str) -> bool {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Direction {
     Left,
     Right,

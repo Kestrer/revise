@@ -1,10 +1,14 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::items_after_statements)]
 // There is a bug in either Clippy or Serde that requires me to do this; the Deserialize derive of
 // Database doesn't compile otherwise.
 #![allow(clippy::mutable_key_type)]
 
+
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::borrow::Borrow;
 
 use rand::Rng;
 use rand::{
@@ -14,7 +18,7 @@ use rand::{
 use rand_regex::Regex as RandRegex;
 use regex::Regex as MatchRegex;
 use serde::de::{self, Deserializer, Unexpected, Visitor};
-use serde::ser::{SerializeTuple, Serializer};
+use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
 /// The database of how well you know which terms.
@@ -26,6 +30,7 @@ pub struct Database {
 
 impl Database {
     /// Create a new empty database.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -36,14 +41,12 @@ impl Database {
     }
     /// Set the knowledge of a term.
     pub fn set_knowledge(&mut self, term: &Term, knowledge: Knowledge) {
-        if knowledge.level.0 != 0 {
-            if let Some(old_knowledge) = self.terms.get_mut(term) {
-                *old_knowledge = knowledge;
-            } else {
-                self.terms.insert(term.clone(), knowledge);
-            }
-        } else {
+        if knowledge.level.0 == 0 {
             self.terms.remove(term);
+        } else if let Some(old_knowledge) = self.terms.get_mut(term) {
+            *old_knowledge = knowledge;
+        } else {
+            self.terms.insert(term.clone(), knowledge);
         }
     }
     /// Record the answer to a question on a term right or wrong.
@@ -125,6 +128,7 @@ impl Database {
 
 #[cfg(test)]
 #[test]
+#[allow(clippy::shadow_unrelated)]
 fn test_database() {
     use rand::rngs::mock::StepRng;
 
@@ -219,6 +223,7 @@ impl Knowledge {
     /// Get a question right.
     ///
     /// This puts you up a level and restores the safety net.
+    #[must_use]
     pub fn correct(self) -> Self {
         Self {
             level: KnowledgeLevel::from(self.level.0 + 1),
@@ -228,6 +233,7 @@ impl Knowledge {
     /// Get a question wrong.
     ///
     /// If there is a safety net, it uses that up, otherwise it puts you a level down.
+    #[must_use]
     pub fn incorrect(self) -> Self {
         Self {
             level: KnowledgeLevel(
@@ -266,7 +272,7 @@ pub struct Question {
     pub answer_type: AnswerType,
 }
 
-/// The type of ways a user can answer a questions.
+/// The type of ways a user can answer a question.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum AnswerType {
     /// The user should answer the question from a multiple-choice of the options.
@@ -281,8 +287,8 @@ pub enum AnswerType {
 /// the term and definition.
 ///
 /// It can be deserialized from and serializes into a tuple of two regexes.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
-#[serde(from = "(Regex, Regex)")]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(from = "(Regex, Regex)", into = "(Regex, Regex)")]
 pub struct Term {
     /// The term of the term.
     pub term: Regex,
@@ -292,6 +298,10 @@ pub struct Term {
 
 impl Term {
     /// Check whether an answer to a question using this term is correct.
+    ///
+    /// # Errors
+    ///
+    /// When the answer is not correct it returns the correct answer regex.
     pub fn check(&self, answer: &str) -> Result<(), &str> {
         if self
             .term
@@ -312,12 +322,9 @@ impl From<(Regex, Regex)> for Term {
     }
 }
 
-impl Serialize for Term {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(2)?;
-        tuple.serialize_element(&self.term)?;
-        tuple.serialize_element(&self.definition)?;
-        tuple.end()
+impl From<Term> for (Regex, Regex) {
+    fn from(term: Term) -> Self {
+        (term.term, term.definition)
     }
 }
 
@@ -330,6 +337,7 @@ pub struct Regex {
 
 impl Regex {
     /// Get the regex as a string.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.matcher.as_str()
     }
@@ -345,6 +353,7 @@ impl<'de> Deserialize<'de> for Regex {
                 f.write_str("a regex")
             }
 
+            #[allow(clippy::match_wildcard_for_single_variants)]
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 Ok(Regex {
                     matcher: MatchRegex::new(v).map_err(|e| match e {
@@ -395,6 +404,12 @@ impl Hash for Regex {
 
 impl AsRef<str> for Regex {
     fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for Regex {
+    fn borrow(&self) -> &str {
         self.as_str()
     }
 }

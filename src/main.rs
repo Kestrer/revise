@@ -1,6 +1,9 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::non_ascii_literal)]
+
 use std::convert::TryFrom;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufWriter, Seek, SeekFrom, Write};
+use std::io::{self, Seek, SeekFrom, Write, Read};
 use std::iter::FromIterator;
 use std::panic;
 
@@ -57,15 +60,19 @@ fn main() -> anyhow::Result<()> {
         .create(true)
         .open(dirs.data_dir().join("data.ron"))?;
 
-    let mut database = if storage.metadata()?.len() != 0 {
-        ron::de::from_reader(&mut storage)?
-    } else {
+    let mut storage_bytes = Vec::new();
+    storage.read_to_end(&mut storage_bytes)?;
+
+    let mut database = if storage_bytes.is_empty() {
         Database::new()
+    } else {
+        ron::de::from_bytes(&storage_bytes)?
     };
 
     database.cap_knowledge(&set.terms);
 
-    let mut out = BufWriter::new(io::stdout());
+    let out = io::stdout();
+    let mut out = out.lock();
 
     match revise_set(&mut database, &set, &mut out) {
         Err(e) if e.is::<ui::QuitEarly>() => (),
@@ -103,14 +110,14 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
         write!(
             out,
             "{} {} {} {}\r\n",
-            database.count_level(&set.terms, 0).to_string().red(),
-            database.count_level(&set.terms, 1),
-            database.count_level(&set.terms, 2),
-            database.count_level(&set.terms, 3).to_string().green(),
+            style(database.count_level(&set.terms, 0)).red(),
+            style(database.count_level(&set.terms, 1)),
+            style(database.count_level(&set.terms, 2)),
+            style(database.count_level(&set.terms, 3)).green(),
         )?;
-        let separator = "-".dim().to_string();
+        let separator = "─".dim();
         for _ in 0..terminal::size()?.0 {
-            out.write_all(separator.as_bytes())?;
+            write!(out, "{}", separator)?;
         }
         write!(out, "\r\n\r\n")?;
 
