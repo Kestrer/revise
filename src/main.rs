@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         ron::de::from_bytes(&storage_bytes)?
     };
 
-    database.cap_knowledge(&set.terms);
+    database.make_incomplete(&set.terms);
 
     let out = io::stdout();
     let mut out = out.lock();

@@ -64,10 +64,10 @@ impl Database {
             .count()
     }
 
-    /// Cap the knowledge of all terms.
-    pub fn cap_knowledge(&mut self, terms: &[Term]) {
-        for term in terms {
-            if self.knowledge(term).level.0 >= 2 {
+    /// Set the knowledge of all terms to level 2 if they are all level 3.
+    pub fn make_incomplete(&mut self, terms: &[Term]) {
+        if terms.iter().all(|term| self.knowledge(term).level.0 == 3) {
+            for term in terms {
                 self.set_knowledge(
                     term,
                     Knowledge {

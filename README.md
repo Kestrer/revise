@@ -38,5 +38,5 @@ revising from, and it tells you to write out your answer.
 If you get it right the term will move up a category and if you get it wrong for the second time in
 a row it will move down. Once all terms are in the third category the revision session ends.
 
-When a set is opened, all terms in that set are capped at category 2, to prevent revision sessions
-that instantly end.
+When a set is opened and all terms are in category 3 they are moved to category 2 to prevent
+revision sessions that instantly end.
