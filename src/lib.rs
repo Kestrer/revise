@@ -4,17 +4,13 @@
 // Database doesn't compile otherwise.
 #![allow(clippy::mutable_key_type)]
 
-
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::borrow::Borrow;
 
 use rand::Rng;
-use rand::{
-    distributions::Distribution as _,
-    seq::{IteratorRandom as _, SliceRandom as _},
-};
+use rand::{distributions::Distribution as _, seq::IteratorRandom as _};
 use rand_regex::Regex as RandRegex;
 use regex::Regex as MatchRegex;
 use serde::de::{self, Deserializer, Unexpected, Visitor};
@@ -85,11 +81,7 @@ impl Database {
 
     /// Ask a question from some list of terms. Returns None if all the questions in the set are
     /// fully known.
-    pub fn question<'a>(
-        &mut self,
-        terms: &'a [Term],
-        rand: &mut impl Rng,
-    ) -> Option<(Question, &'a Term)> {
+    pub fn question<'a>(&mut self, terms: &'a [Term], rand: &mut impl Rng) -> Option<&'a Term> {
         let unknown_terms = terms.iter().filter(|term| self.knowledge(term).level.0 < 3);
         let term = self
             .previous
@@ -100,29 +92,7 @@ impl Database {
 
         self.previous = Some(term.clone());
 
-        Some((
-            Question {
-                prompt: term.definition.rand.sample(rand),
-                answer_type: match self.knowledge(term).level.0 {
-                    0 => AnswerType::MultipleChoice({
-                        let mut choices = [term; 4];
-                        let total_choices = terms
-                            .iter()
-                            .filter(|other_term| other_term != &term)
-                            .choose_multiple_fill(rand, &mut choices[..3])
-                            + 1;
-                        let choices = &mut choices[..total_choices];
-                        choices.shuffle(rand);
-                        choices
-                            .iter()
-                            .map(|term| term.term.rand.sample(rand))
-                            .collect()
-                    }),
-                    _ => AnswerType::Write,
-                },
-            },
-            term,
-        ))
+        Some(term)
     }
 }
 
@@ -141,21 +111,13 @@ fn test_database() {
         Term::from((re("[Hh]2[Oo]"), re("water|(di)?hydrogen monoxide"))),
     ];
 
-    let (question, term) = db.question(&terms, &mut rng).unwrap();
-    assert_eq!(question.prompt, "water");
-    assert_eq!(
-        question.answer_type,
-        AnswerType::MultipleChoice(own(&["o2", "H2o"]))
-    );
+    let term = db.question(&terms, &mut rng).unwrap();
     assert_eq!(term.term.as_str(), "[Hh]2[Oo]");
     assert_eq!(term.definition.as_str(), "water|(di)?hydrogen monoxide");
 
-    let (question, term) = db.question(&terms, &mut rng).unwrap();
-    assert_eq!(question.prompt, "oxygen");
-    assert_eq!(
-        question.answer_type,
-        AnswerType::MultipleChoice(own(&["h2O", "o2"]))
-    );
+    let term = db.question(&terms, &mut rng).unwrap();
+    assert_eq!(term.term.as_str(), "[Oo]2");
+    assert_eq!(term.definition.as_str(), "oxygen");
 
     assert_eq!(
         db.knowledge(term),
@@ -199,9 +161,6 @@ fn test_database() {
         }
     );
 
-    fn own(slice: &[&str]) -> Vec<String> {
-        slice.iter().copied().map(str::to_owned).collect()
-    }
     fn re(re: &str) -> Regex {
         Regex {
             matcher: MatchRegex::new(re).unwrap(),
@@ -263,24 +222,6 @@ impl From<KnowledgeLevel> for u8 {
     }
 }
 
-/// A question to ask the user.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Question {
-    /// The prompt to display to the user.
-    pub prompt: String,
-    /// How the user should answer.
-    pub answer_type: AnswerType,
-}
-
-/// The type of ways a user can answer a question.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub enum AnswerType {
-    /// The user should answer the question from a multiple-choice of the options.
-    MultipleChoice(Vec<String>),
-    /// The user should answer the question by typing out a response.
-    Write,
-}
-
 /// A term and defintion.
 ///
 /// Confusingly, this library uses the word "term" to mean both the term, and the combination of
@@ -313,6 +254,12 @@ impl Term {
         } else {
             Err(self.term.as_str())
         }
+    }
+
+    /// Get a prompt for the user. This is a randomly generated string that matches the definition
+    /// regex.
+    pub fn prompt(&self, rng: &mut impl Rng) -> String {
+        self.definition.rand.sample(rng)
     }
 }
 

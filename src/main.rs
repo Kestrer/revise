@@ -1,9 +1,8 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
 
-use std::convert::TryFrom;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write, Read};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::iter::FromIterator;
 use std::panic;
 
@@ -20,7 +19,7 @@ use directories_next::ProjectDirs;
 use scopeguard::defer_on_success;
 use serde::Deserialize;
 
-use revise::{AnswerType, Database, Term};
+use revise::{Database, Term};
 
 mod ui;
 
@@ -89,6 +88,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> anyhow::Result<()> {
+    let mut rng = rand::thread_rng();
+
     enter_raw()?;
 
     // Panic hook so that raw mode is exited before the error message is printed
@@ -104,7 +105,7 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
         let _ = panic::take_hook();
     };
 
-    while let Some((question, term)) = database.question(&set.terms, &mut rand::thread_rng()) {
+    while let Some(term) = database.question(&set.terms, &mut rng) {
         queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
         write!(out, "{}\r\n", style(&set.name).bold())?;
         write!(
@@ -121,32 +122,12 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
         }
         write!(out, "\r\n\r\n")?;
 
-        write!(out, " {}\r\n\r\n", question.prompt.bold())?;
-        let answer = match question.answer_type {
-            AnswerType::MultipleChoice(choices) => {
-                for (i, choice) in choices.iter().enumerate() {
-                    write!(out, "{}{}\r\n", format!("{}: ", i + 1).dim(), choice)?;
-                }
-                write!(out, "\r\n{}", format!("1..{}: ", choices.len()).dim())?;
-                out.flush()?;
-                let num = loop {
-                    if let KeyCode::Char(key @ '1'..='9') = ui::read_key()?.code {
-                        if let Some(num) = key.to_digit(10) {
-                            let num = usize::try_from(num).unwrap() - 1;
-                            if num < choices.len() {
-                                break num;
-                            }
-                        }
-                    }
-                };
-                choices.into_iter().nth(num).unwrap()
-            }
-            AnswerType::Write => {
-                write!(out, "{}", "Term: ".dim())?;
-                out.flush()?;
-                ui::read_line(&mut out)?
-            }
-        };
+        write!(out, " {}\r\n\r\n", term.prompt(&mut rng).bold())?;
+
+        write!(out, "{}", "Term: ".dim())?;
+        out.flush()?;
+        let answer = ui::read_line(&mut out)?;
+
         let correct = match term.check(&answer) {
             Ok(()) => true,
             Err(correct) => {
@@ -160,7 +141,24 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
                 )?;
                 write!(out, "Override (c)orrect or continue: ")?;
                 out.flush()?;
-                ui::read_key()?.code == KeyCode::Char('c')
+                if ui::read_key()?.code == KeyCode::Char('c') {
+                    true
+                } else {
+                    writeln!(out, "\r\n")?;
+                    loop {
+                        write!(
+                            out,
+                            "\r{}{}",
+                            terminal::Clear(ClearType::UntilNewLine),
+                            "Type it out: ".dim()
+                        )?;
+                        out.flush()?;
+                        if term.check(&ui::read_line(&mut out)?).is_ok() {
+                            break;
+                        }
+                    }
+                    false
+                }
             }
         };
         database.record(term, correct);

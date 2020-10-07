@@ -32,12 +32,9 @@ is accepted.
 and `~\AppData\Roaming\revise\data\data.ron` on Windows. You can edit this to manually tell `revise`
 your knowledge of a term, although it isn't formatted.
 
-When revising, `revise` chooses a random term from the set you are revising from. It looks up how
-well you know that term (which is rated from 0 to 3) in its database, and depending on that it tests
-you differently:
-- If it is 0 it gives you a multiple-choice from three other randomly chosen terms.
-- If it is 1 to 2 it tells you to write out your answer.
-- If it is 3 you aren't tested as you already know it perfectly.
+When revising, `revise` chooses a random term with a knowledge level under 3 from the set you are
+revising from, and it tells you to write out your answer.
+
 If you get it right the term will move up a category and if you get it wrong for the second time in
 a row it will move down. Once all terms are in the third category the revision session ends.
 
