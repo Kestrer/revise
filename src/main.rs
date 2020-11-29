@@ -111,10 +111,10 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
         write!(
             out,
             "{} {} {} {}\r\n",
-            style(database.count_level(&set.terms, 0)).red(),
+            style(database.count_level(&set.terms, 0)).dark_red(),
             style(database.count_level(&set.terms, 1)),
             style(database.count_level(&set.terms, 2)),
-            style(database.count_level(&set.terms, 3)).green(),
+            style(database.count_level(&set.terms, 3)).dark_green(),
         )?;
         let separator = "─".dim();
         for _ in 0..terminal::size()?.0 {
@@ -132,12 +132,12 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
             Ok(()) => true,
             Err(correct) => {
                 write!(out, "\r\n\r\n")?;
-                write!(out, " {}\r\n\r\n", "Incorrect".red().bold())?;
+                write!(out, " {}\r\n\r\n", "Incorrect".dark_red().bold())?;
                 write!(
                     out,
                     "{}{}\r\n\r\n",
                     "Answer: ".dim(),
-                    style(correct).green()
+                    style(correct).dark_green()
                 )?;
                 write!(out, "Override (c)orrect or continue: ")?;
                 out.flush()?;
