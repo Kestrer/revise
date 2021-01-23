@@ -6,7 +6,7 @@ Revise is a command line tool to help students revise - like Quizlet, but on the
 
 You first need cargo installed. Then type:
 ```sh
-cargo install --git https://github.com/Koxiaet/revise
+cargo install --git https://github.com/Kestrer/revise
 ```
 
 ## Usage

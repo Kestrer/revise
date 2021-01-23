@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
     let matches = App::new("revise")
         .version("0.3")
         .about("Utility to help students revise.")
-        .author("Koxiaet")
+        .author("Kestrer <kestrer.dev@gmail.com>")
         .arg(
             Arg::with_name("sets")
                 .help("The sets to revise")
