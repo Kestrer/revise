@@ -31,11 +31,7 @@ pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
                 }
             }
             (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
-                let remove_from = line[..position]
-                    .char_indices()
-                    .rev()
-                    .find(|(_, c)| c.is_whitespace())
-                    .map_or(0, |(i, _)| i);
+                let remove_from = last_word_start(&line[..position]);
                 line.replace_range(remove_from..position, "");
                 position = remove_from;
             }
@@ -134,4 +130,30 @@ fn next_boundary(direction: Direction, position: &mut usize, on: &str) -> bool {
 enum Direction {
     Left,
     Right,
+}
+
+fn last_word_start(s: &str) -> usize {
+    let end_of_whitespace = s
+        .char_indices()
+        .rfind(|(_, c)| !c.is_whitespace())
+        .map_or(0, |(i, _)| i);
+
+    s[..end_of_whitespace]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| !c.is_whitespace())
+        .last()
+        .map_or(end_of_whitespace, |(i, _)| i)
+}
+
+#[test]
+fn test_last_word_start() {
+    assert_eq!(last_word_start(""), 0);
+    assert_eq!(last_word_start("ab"), 0);
+    assert_eq!(last_word_start("  "), 0);
+    assert_eq!(last_word_start("a "), 0);
+    assert_eq!(last_word_start(" a"), 1);
+    assert_eq!(last_word_start("hello  world"), 7);
+    assert_eq!(last_word_start("hello  world "), 7);
+    assert_eq!(last_word_start("hello  world\t \n\t  \t"), 7);
 }
