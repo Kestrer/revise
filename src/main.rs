@@ -40,10 +40,8 @@ fn main() -> anyhow::Result<()> {
         .values_of("sets")
         .unwrap()
         .map(|filename| {
-            Ok(
-                ron::de::from_bytes(&fs::read(filename).context("Failed to open set")?)
-                    .context("Set format invalid")?,
-            )
+            ron::de::from_bytes(&fs::read(filename).context("Failed to open set")?)
+                .context("Set format invalid")
         })
         .collect::<Result<Option<Set>, anyhow::Error>>()?
         .unwrap();
@@ -95,14 +93,14 @@ fn revise_set(database: &mut Database, set: &Set, mut out: impl io::Write) -> an
     // Panic hook so that raw mode is exited before the error message is printed
     let old_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        let _ = exit_raw();
+        drop(exit_raw());
         old_hook(info);
     }));
 
     // Don't exit raw mode twice; only call this when not panicking.
     defer_on_success! {
-        let _ = exit_raw();
-        let _ = panic::take_hook();
+        drop(exit_raw());
+        drop(panic::take_hook());
     };
 
     while let Some(term) = database.question(&set.terms, &mut rng) {
