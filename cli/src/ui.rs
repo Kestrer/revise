@@ -21,7 +21,7 @@ pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
     loop {
         let key_event = read_key()?;
         match (key_event.code, key_event.modifiers) {
-            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 line.insert(position, c);
                 position += c.len_utf8();
             }
@@ -50,8 +50,8 @@ pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
             (KeyCode::Right, _) => {
                 next_boundary(Right, &mut position, &line);
             }
-            (KeyCode::Up, _) | (KeyCode::Home, _) => position = 0,
-            (KeyCode::Down, _) | (KeyCode::End, _) => position = line.len(),
+            (KeyCode::Up | KeyCode::Home, _) => position = 0,
+            (KeyCode::Down | KeyCode::End, _) => position = line.len(),
             (KeyCode::Enter, _) => break,
             _ => (),
         }

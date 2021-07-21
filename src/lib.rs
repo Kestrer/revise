@@ -32,6 +32,7 @@ impl Database {
     }
 
     /// Get how well known a term is.
+    #[must_use]
     pub fn knowledge(&self, term: &Term) -> Knowledge {
         self.terms.get(term).copied().unwrap_or_default()
     }
@@ -258,6 +259,7 @@ impl Term {
 
     /// Get a prompt for the user. This is a randomly generated string that matches the definition
     /// regex.
+    #[must_use]
     pub fn prompt(&self, rng: &mut impl Rng) -> String {
         self.definition.rand.sample(rng)
     }
