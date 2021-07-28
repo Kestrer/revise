@@ -36,6 +36,10 @@ struct Opts {
     #[structopt(required = true)]
     sets: Vec<PathBuf>,
 
+    /// Check the sets syntactically, but don't start a revision session.
+    #[structopt(short, long)]
+    check: bool,
+
     /// Whether to invert the terms and definitions.
     #[structopt(short, long)]
     invert: bool,
@@ -49,7 +53,11 @@ fn main() {
 }
 
 fn try_main() -> Result<(), ()> {
-    let Opts { sets, invert } = Opts::from_args();
+    let Opts {
+        sets,
+        invert,
+        check,
+    } = Opts::from_args();
 
     let mut errored = false;
 
@@ -111,6 +119,9 @@ fn try_main() -> Result<(), ()> {
 
     if errored {
         return Err(());
+    }
+    if check {
+        return Ok(());
     }
 
     let dirs = ProjectDirs::from("", "", "revise")
