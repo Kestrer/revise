@@ -1,8 +1,6 @@
 use std::convert::TryFrom;
-use std::fmt::{self, Display, Formatter};
 use std::io;
 
-use anyhow::bail;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::queue;
 use crossterm::{
@@ -13,13 +11,16 @@ use unicode_width::UnicodeWidthStr as _;
 
 use Direction::{Left, Right};
 
-pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
+pub(crate) fn read_line(mut out: impl io::Write) -> io::Result<Option<String>> {
     let (start_x, start_y) = cursor::position()?;
     let mut line = String::new();
     let mut position = 0;
 
     loop {
-        let key_event = read_key()?;
+        let key_event = match read_key()? {
+            Some(key) => key,
+            None => return Ok(None),
+        };
         match (key_event.code, key_event.modifiers) {
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 line.insert(position, c);
@@ -78,32 +79,25 @@ pub(crate) fn read_line(mut out: impl io::Write) -> anyhow::Result<String> {
     )?;
     out.flush()?;
 
-    Ok(line)
+    Ok(Some(line))
 }
 
-pub(crate) fn read_key() -> anyhow::Result<KeyEvent> {
-    Ok(loop {
+pub(crate) fn read_key() -> io::Result<Option<KeyEvent>> {
+    let key = loop {
         if let Event::Key(key) = event::read()? {
-            if key.modifiers == KeyModifiers::CONTROL
-                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q'))
-            {
-                bail!(QuitEarly);
-            }
             break key;
         }
-    })
+    };
+    Ok(
+        if key.modifiers == KeyModifiers::CONTROL
+            && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q'))
+        {
+            None
+        } else {
+            Some(key)
+        },
+    )
 }
-
-#[derive(Debug)]
-pub(crate) struct QuitEarly;
-
-impl Display for QuitEarly {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str("Quit early")
-    }
-}
-
-impl std::error::Error for QuitEarly {}
 
 fn next_boundary(direction: Direction, position: &mut usize, on: &str) -> bool {
     if *position

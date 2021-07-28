@@ -1,0 +1,11 @@
+[package]
+name = "revise-set-parser"
+version = "0.0.0"
+edition = "2018"
+publish = false
+
+[dependencies]
+unicode-width = "0.1.8"
+
+[dev-dependencies]
+maplit = "1.0.2"

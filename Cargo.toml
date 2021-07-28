@@ -1,19 +1,2 @@
-[package]
-name = "revise"
-version = "0.3.0"
-authors = ["Kestrer <kestrer.dev@gmail.com>"]
-edition = "2018"
-publish = false
-
-[dependencies]
-# Data storage
-serde = { version = "1.0.116", features = ["derive"] }
-ron = "0.6.2"
-
-# Sets and terms
-regex = "1.3.9"
-rand_regex = "0.14.2"
-rand = "0.7.3"
-
 [workspace]
-members = ["cli"]
+members = ["database", "set-parser", "cli"]
