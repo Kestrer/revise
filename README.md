@@ -33,3 +33,17 @@ revision sessions that instantly end.
 `revise` stores a database of how well you know all the terms you have revised in
 `~/.local/share/revise/data.sqlite3` on Linux, `~/Library/Application Support/revise/data.sqlite3`
 on macOS and `~\AppData\Roaming\revise\data\data.sqlite3` on Windows.
+
+## Demo
+
+Here is an example revision session using the following set:
+
+```
+Example Set
+
+mi - me, my, myself
+moku - food, to eat
+ale, ali - all
+```
+
+![revise demo](./demo.gif)
