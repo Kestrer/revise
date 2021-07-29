@@ -1,148 +1,175 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
 
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::{self, Display, Formatter};
+use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::mem;
-use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crossterm::{
-    cursor,
-    event::KeyCode,
-    execute, queue,
-    style::{style, Stylize},
-    terminal::{self, ClearType},
-};
 use directories::ProjectDirs;
-use rand::seq::IteratorRandom as _;
-use rand::Rng;
 use structopt::StructOpt;
+use thiserror::Error;
 
 use revise_database::{CardKey, Database};
-use revise_set_parser::{Card, ParseError};
+use revise_set_parser::{ParseError, Set};
 
 mod ui;
+
+mod learn;
 
 mod report;
 use report::{Annotation, Report, Source};
 
 #[derive(StructOpt)]
 #[structopt(name = "revise", author = "Kestrer")]
-struct Opts {
-    /// The sets to revise.
-    #[structopt(required = true)]
-    sets: Vec<PathBuf>,
+enum Opts {
+    /// Learn all the cards in one or more sets.
+    Learn {
+        /// The sets to learn.
+        #[structopt(required = true)]
+        sets: Vec<PathBuf>,
 
-    /// Check the sets syntactically, but don't start a revision session.
-    #[structopt(short, long)]
-    check: bool,
+        /// Whether to invert the terms and definitions.
+        #[structopt(short, long)]
+        invert: bool,
+    },
 
-    /// Whether to invert the terms and definitions.
-    #[structopt(short, long)]
-    invert: bool,
+    /// Check one or more sets syntactically, but don't learn anything.
+    Check {
+        /// The sets to check.
+        #[structopt(required = true)]
+        sets: Vec<PathBuf>,
+    },
 }
 
 fn main() {
-    if try_main().is_err() {
-        report::error!("aborting due to previous error");
+    struct StderrReporter<'a> {
+        first_report: bool,
+        stderr: io::StderrLock<'a>,
+    }
+    impl Reporter for StderrReporter<'_> {
+        fn report(&mut self, report: Report<'_>) {
+            drop(if self.first_report {
+                self.first_report = false;
+                write!(self.stderr, "{}", report)
+            } else {
+                write!(self.stderr, "\n{}", report)
+            });
+        }
+    }
+
+    let stderr = io::stderr();
+    let mut reporter = StderrReporter {
+        first_report: true,
+        stderr: stderr.lock(),
+    };
+
+    if try_main(&mut reporter).is_err() {
+        reporter.report(report::error!("aborting due to previous error"));
+        drop(reporter);
         std::process::exit(1);
     }
 }
 
-fn try_main() -> Result<(), ()> {
-    let Opts {
-        sets,
-        invert,
-        check,
-    } = Opts::from_args();
+trait Reporter {
+    fn report(&mut self, report: Report<'_>);
+    fn error_chain(&mut self, error: impl Error) {
+        self.report(Report::error_chain(error));
+    }
+}
+fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
+    match Opts::from_args() {
+        Opts::Learn { sets, invert } => {
+            let mut result = Ok(());
 
-    let mut errored = false;
+            let sources = sets
+                .into_iter()
+                .filter_map(|path| read_file(path, reporter).map_err(|e| result = Err(e)).ok())
+                .collect::<Vec<_>>();
 
-    let sources = sets
-        .into_iter()
-        .inspect(|filename| {
-            if filename.extension() != Some("set".as_ref()) {
-                let mut new_filename = filename.clone();
-                new_filename.set_extension("set");
-                report::warning!(
-                    "{} is recommended to have a file extension of `.set`: `{}`",
-                    filename.display(),
-                    new_filename.display(),
-                );
-            }
-        })
-        .filter_map(|filename| match fs::read_to_string(&filename) {
-            Ok(source) => Some(Source {
-                origin: Some(filename.to_string_lossy().into_owned()),
-                text: source,
-            }),
-            Err(e) => {
-                report::error!("couldn't read {}: {}", filename.display(), e);
-                errored = true;
-                None
-            }
-        })
-        .collect::<Vec<_>>();
+            let mut title = String::new();
+            let mut cards = HashMap::new();
 
-    let mut title = String::new();
-    let mut cards = HashMap::new();
+            for source in &sources {
+                let set = match parse_set(source, reporter) {
+                    Ok(set) => set,
+                    Err(()) => {
+                        result = Err(());
+                        continue;
+                    }
+                };
 
-    for source in &sources {
-        let set = match revise_set_parser::parse(&source.text) {
-            Ok(set) => set,
-            Err(errors) => {
-                for e in errors {
-                    report_parse_error(&e, &source).eprint();
+                if title.is_empty() {
+                    title = set.title.to_owned();
+                } else {
+                    title.push_str(" + ");
+                    title.push_str(set.title);
                 }
-                errored = true;
-                continue;
-            }
-        };
 
-        if title.is_empty() {
-            title = set.title.to_owned();
-        } else {
-            title.push_str(" + ");
-            title.push_str(set.title);
+                cards.extend(set.cards.into_iter().map(|mut card| {
+                    if invert {
+                        mem::swap(&mut card.terms, &mut card.definitions);
+                    }
+                    (CardKey::new(&card.terms, &card.definitions), card)
+                }));
+            }
+
+            result?;
+
+            let mut database = open_database().map_err(|e| reporter.error_chain(e))?;
+            learn::learn(&mut database, &title, &cards, &mut io::stdout().lock())
+                .map_err(|e| reporter.error_chain(&*e))?;
         }
+        Opts::Check { sets } => {
+            let mut result = Ok(());
 
-        cards.extend(set.cards.into_iter().map(|mut card| {
-            if invert {
-                mem::swap(&mut card.terms, &mut card.definitions);
+            for path in sets {
+                if read_file(path, reporter)
+                    .and_then(|source| parse_set(&source, reporter).map(drop))
+                    .is_err()
+                {
+                    result = Err(());
+                }
             }
-            (CardKey::new(&card.terms, &card.definitions), card)
-        }));
+
+            result?;
+        }
     }
-
-    if errored {
-        return Err(());
-    }
-    if check {
-        return Ok(());
-    }
-
-    let dirs = ProjectDirs::from("", "", "revise")
-        .ok_or_else(|| report::error!("couldn't find home directory"))?;
-
-    fs::create_dir_all(dirs.data_dir())
-        .map_err(|e| report::error!("couldn't create `{}`: {}", dirs.data_dir().display(), e))?;
-
-    let database_path = dirs.data_dir().join("data.sqlite3");
-    let mut database = Database::open(database_path).map_err(report::error_chain)?;
-
-    database
-        .make_incomplete(cards.keys())
-        .map_err(report::error_chain)?;
-
-    let out = io::stdout();
-    let mut out = out.lock();
-
-    revise_set(&mut database, &title, &cards, &mut out).map_err(|e| report::error_chain(&*e))?;
 
     Ok(())
+}
+
+fn read_file<P: AsRef<Path>>(path: P, reporter: &mut impl Reporter) -> Result<Source, ()> {
+    let path = path.as_ref();
+
+    if path.extension() != Some("set".as_ref()) {
+        reporter.report(report::warning!(
+            "{} is recommended to have a file extension of `.set`: `{}`",
+            path.display(),
+            path.with_extension("set").display(),
+        ));
+    }
+
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Source {
+            origin: Some(path.to_string_lossy().into_owned()),
+            text,
+        }),
+        Err(e) => {
+            reporter.report(report::error!("couldn't read {}: {}", path.display(), e));
+            Err(())
+        }
+    }
+}
+
+fn parse_set<'a>(source: &'a Source, reporter: &mut impl Reporter) -> Result<Set<'a>, ()> {
+    revise_set_parser::parse(&source.text).map_err(|errors| {
+        for error in errors {
+            reporter.report(report_parse_error(&error, &source));
+        }
+    })
 }
 
 fn report_parse_error<'a>(error: &ParseError, source: &'a Source) -> Report<'a> {
@@ -217,237 +244,33 @@ fn report_parse_error<'a>(error: &ParseError, source: &'a Source) -> Report<'a> 
     }
 }
 
-fn revise_set(
-    database: &mut Database,
-    title: &str,
-    cards: &HashMap<CardKey, Card<'_>>,
-    mut out: impl io::Write,
-) -> anyhow::Result<()> {
-    let mut rng = rand::thread_rng();
+fn open_database() -> Result<Database, OpenDatabaseError> {
+    let dirs =
+        ProjectDirs::from("", "", "revise").ok_or(OpenDatabaseErrorInner::NoHomeDirectory)?;
 
-    let _raw_guard = enter_raw()?;
+    fs::create_dir_all(dirs.data_dir()).map_err(|source| OpenDatabaseErrorInner::CreateDir {
+        path: dirs.data_dir().to_owned(),
+        source,
+    })?;
 
-    let mut session = Session::new(database, cards.keys(), rand::thread_rng())?;
-
-    while let Some(card_key) = session.question_card() {
-        let card = &cards[card_key];
-
-        queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
-        write!(out, "{}\r\n", title.bold())?;
-
-        let distribution = session.database.level_distribution(cards.keys())?;
-        write!(
-            out,
-            "{} {} {} {}\r\n",
-            style(distribution[0]).dark_red(),
-            distribution[1],
-            distribution[2],
-            style(distribution[3]).dark_green(),
-        )?;
-        let separator = "─".dim();
-        for _ in 0..terminal::size()?.0 {
-            write!(out, "{}", separator)?;
-        }
-        write!(out, "\r\n\r\n")?;
-
-        write!(
-            out,
-            "{}\r\n\r\n",
-            card.terms.iter().choose(&mut rng).unwrap()
-        )?;
-
-        write!(out, "{}", "Term: ".dim())?;
-        out.flush()?;
-        let answer = match ui::read_line(&mut out)? {
-            Some(line) => line,
-            None => break,
-        };
-        let answer = answer.split(',').map(str::trim).collect::<BTreeSet<_>>();
-
-        let correct = if card.definitions == answer {
-            true
-        } else {
-            write!(out, "\r\n\r\n")?;
-            write!(out, " {}\r\n\r\n", "Incorrect".dark_red().bold())?;
-            write!(
-                out,
-                "{}{}\r\n\r\n",
-                "Answer: ".dim(),
-                style(DisplayAnswer(&card.definitions)).dark_green(),
-            )?;
-            write!(out, "Override (c)orrect or continue: ")?;
-            out.flush()?;
-
-            let key = match ui::read_key()? {
-                Some(key) => key,
-                None => break,
-            };
-
-            if key.code == KeyCode::Char('c') {
-                true
-            } else {
-                writeln!(out, "\r\n")?;
-                loop {
-                    write!(
-                        out,
-                        "\r{}{}",
-                        terminal::Clear(ClearType::UntilNewLine),
-                        "Type it out: ".dim(),
-                    )?;
-                    out.flush()?;
-                    let answer = match ui::read_line(&mut out)? {
-                        Some(line) => line,
-                        None => break,
-                    };
-                    let answer = answer.split(',').map(str::trim).collect::<BTreeSet<_>>();
-
-                    if answer == card.definitions {
-                        break;
-                    }
-                }
-                false
-            }
-        };
-
-        session.record_result(correct)?;
-    }
-
-    Ok(())
+    let database_path = dirs.data_dir().join("data.sqlite3");
+    Ok(Database::open(database_path).map_err(OpenDatabaseErrorInner::Open)?)
 }
 
-fn enter_raw() -> io::Result<impl Drop> {
-    fn exit() {
-        drop(execute!(io::stdout(), terminal::LeaveAlternateScreen));
-        drop(terminal::disable_raw_mode());
-    }
+#[derive(Debug, Error)]
+#[error("failed to open card database")]
+struct OpenDatabaseError(
+    #[source]
+    #[from]
+    OpenDatabaseErrorInner,
+);
 
-    execute!(
-        io::stdout(),
-        terminal::EnterAlternateScreen,
-        terminal::Clear(ClearType::All)
-    )?;
-    terminal::enable_raw_mode()?;
-
-    // Panic hook so that raw mode is exited before the error message is printed
-    let old_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |info| {
-        exit();
-        old_hook(info);
-    }));
-
-    // Don't exit raw mode twice; only call this when not panicking.
-    Ok(scopeguard::guard_on_success((), |()| {
-        exit();
-        drop(panic::take_hook());
-    }))
-}
-
-struct DisplayAnswer<'a>(&'a BTreeSet<&'a str>);
-impl Display for DisplayAnswer<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut answers = self.0.iter();
-        f.write_str(answers.next().unwrap())?;
-        for answer in answers {
-            write!(f, ", {}", answer)?;
-        }
-        Ok(())
-    }
-}
-
-struct Session<'a, R: Rng> {
-    database: &'a mut Database,
-    active_cards: Vec<&'a CardKey>,
-    question: Option<usize>,
-    rng: R,
-}
-impl<'a, R: Rng> Session<'a, R> {
-    fn new<I>(database: &'a mut Database, cards: I, mut rng: R) -> anyhow::Result<Self>
-    where
-        I: IntoIterator<Item = &'a CardKey>,
-        I::IntoIter: ExactSizeIterator + Clone + 'a,
-    {
-        let cards = cards.into_iter();
-
-        let active_cards = cards
-            .clone()
-            .zip(database.knowledge_all(cards)?)
-            .filter(|(_, knowledge)| knowledge.level.get() < 3)
-            .map(|(key, _)| key)
-            .collect::<Vec<_>>();
-
-        let question = if active_cards.is_empty() {
-            None
-        } else {
-            Some(rng.gen_range(0..active_cards.len()))
-        };
-
-        Ok(Self {
-            database,
-            active_cards,
-            question,
-            rng,
-        })
-    }
-
-    fn question_card(&self) -> Option<&'a CardKey> {
-        Some(self.active_cards[self.question?])
-    }
-
-    fn record_result(&mut self, correct: bool) -> anyhow::Result<()> {
-        let prev_index = self.question.unwrap();
-        let prev_key = self.active_cards[prev_index];
-
-        let mut avoid_picking_prev_index = self.active_cards.len() > 1;
-
-        if correct {
-            self.database.record_correct(prev_key)?;
-
-            if self.database.knowledge(prev_key)?.level.get() == 3 {
-                self.active_cards.swap_remove(prev_index);
-                avoid_picking_prev_index = false;
-            }
-        } else {
-            self.database.record_incorrect(prev_key)?;
-        }
-
-        self.question = if self.active_cards.is_empty() {
-            None
-        } else {
-            if avoid_picking_prev_index {
-                self.active_cards.swap_remove(prev_index);
-            }
-
-            let index = self.rng.gen_range(0..self.active_cards.len());
-
-            if avoid_picking_prev_index {
-                self.active_cards.push(prev_key);
-            }
-
-            Some(index)
-        };
-
-        Ok(())
-    }
-}
-
-#[test]
-fn test_session() {
-    use maplit::btreeset;
-    use rand::rngs::mock::StepRng;
-
-    let mut database = Database::open_in_memory().unwrap();
-    let cards = [
-        CardKey::new(&btreeset!("A"), &btreeset!("a")),
-        CardKey::new(&btreeset!("B"), &btreeset!("b")),
-        CardKey::new(&btreeset!("C"), &btreeset!("c")),
-    ];
-    let rng = StepRng::new(0, 15_701_263_798_120_398_361);
-    let mut session = Session::new(&mut database, &cards, rng).unwrap();
-
-    for i in [0, 1, 0, 2, 1, 2, 0, 2, 1] {
-        assert_eq!(session.question_card(), Some(&cards[i]));
-        session.record_result(true).unwrap();
-    }
-
-    assert_eq!(session.question_card(), None);
+#[derive(Debug, Error)]
+enum OpenDatabaseErrorInner {
+    #[error("couldn't find home directory")]
+    NoHomeDirectory,
+    #[error("couldn't create `{path}`")]
+    CreateDir { path: PathBuf, source: io::Error },
+    #[error(transparent)]
+    Open(revise_database::OpenError),
 }

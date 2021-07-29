@@ -2,7 +2,7 @@
 
 use std::borrow::{Borrow, Cow};
 use std::error::Error;
-use std::io;
+use std::fmt::{self, Display, Formatter};
 use std::ops::Range;
 
 use annotate_snippets::display_list::{DisplayList, FormatOptions};
@@ -10,8 +10,9 @@ use annotate_snippets::snippet::{self, Snippet};
 
 pub use annotate_snippets::snippet::AnnotationType;
 
+#[must_use]
 pub struct Report<'a> {
-    title: Annotation<'a>,
+    pub title: Annotation<'a>,
     sections: Vec<Section<'a>>,
     footers: Vec<Annotation<'a>>,
 }
@@ -53,9 +54,10 @@ impl<'a> Report<'a> {
 
         this
     }
+}
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn write_to<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
+impl Display for Report<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let display_list = DisplayList::from(Snippet {
             title: Some(snippet::Annotation {
                 id: None,
@@ -116,16 +118,12 @@ impl<'a> Report<'a> {
                 ..FormatOptions::default()
             },
         });
-        writer.write_fmt(format_args!("\n{}\n", display_list))
-    }
-
-    pub fn eprint(&self) {
-        drop(self.write_to(io::stderr()));
+        writeln!(f, "{}", display_list)
     }
 }
 
 pub struct Annotation<'a> {
-    annotation_type: AnnotationType,
+    pub annotation_type: AnnotationType,
     message: Cow<'a, str>,
 }
 
@@ -206,6 +204,7 @@ impl Source {
     ) -> Section<'a> {
         Section::new(self).label(span, annotation)
     }
+
     pub fn label_all<'a>(&'a self, annotation: Annotation<'a>) -> Section<'a> {
         Section::new(self).label_all(annotation)
     }
@@ -254,17 +253,13 @@ fn offset_of(needle: &str, source: &str) -> usize {
 
 macro_rules! error {
     ($($tt:tt)*) => {
-        $crate::report::Report::error(::std::format!($($tt)*)).eprint()
+        $crate::report::Report::error(::std::format!($($tt)*))
     }
 }
 pub(crate) use error;
 macro_rules! warning {
     ($($tt:tt)*) => {
-        $crate::report::Report::warning(::std::format!($($tt)*)).eprint()
+        $crate::report::Report::warning(::std::format!($($tt)*))
     }
 }
 pub(crate) use warning;
-
-pub fn error_chain(error: impl Error) {
-    Report::error_chain(error).eprint();
-}
