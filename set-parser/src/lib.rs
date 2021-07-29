@@ -155,7 +155,7 @@ pub struct Set<'a> {
 }
 
 /// A card, consisting of some terms and some definitions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Card<'a> {
     /// The terms of the card.
     pub terms: BTreeSet<&'a str>,

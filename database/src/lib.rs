@@ -8,6 +8,7 @@
 )]
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use bincode::Options as _;
@@ -86,17 +87,11 @@ impl Database {
     {
         (|| {
             let cards = cards.into_iter();
-            let cards_len = cards.len();
 
-            let mut sql =
-                "SELECT card,knowledge_level,safety_net FROM v1 WHERE card IN (".to_owned();
-            if cards_len != 0 {
-                sql.push('?');
-            }
-            for _ in 1..cards_len {
-                sql.push_str(",?");
-            }
-            sql.push(')');
+            let sql = format!(
+                "SELECT card,knowledge_level,safety_net FROM v1 WHERE {}",
+                card_in(&cards)
+            );
 
             let result = self
                 .connection
@@ -135,6 +130,44 @@ impl Database {
                 .execute(
                     "INSERT INTO v1 VALUES (?, ?, ?) ON CONFLICT(card) DO UPDATE SET knowledge_level = ?2, safety_net = ?3",
                     rusqlite::params![card.as_sql(), knowledge.level.get(), knowledge.safety_net],
+                )
+                .map_err(SetKnowledgeErrorKind::Insert)?;
+        }
+        Ok(())
+    }
+
+    /// Set the knowledge of several cards.
+    pub fn set_knowledge_all<'a, I>(
+        &mut self,
+        cards: I,
+        knowledge: Knowledge,
+    ) -> Result<(), SetKnowledgeError>
+    where
+        I: IntoIterator<Item = &'a CardKey>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let cards = cards.into_iter();
+
+        if knowledge.level.get() == 0 {
+            let sql = format!("DELETE FROM v1 WHERE {}", card_in(&cards));
+            self.connection
+                .execute(&sql, rusqlite::params_from_iter(cards.map(CardKey::as_sql)))
+                .map_err(SetKnowledgeErrorKind::Remove)?;
+        } else {
+            let sql = format!(
+                "INSERT INTO v1 VALUES {} ON CONFLICT(card) DO UPDATE SET knowledge_level = ?1, safety_net = ?2",
+                CommaSeparatedWith(|i, f| write!(f, "(?{}, ?1, ?2)", i + 3), cards.len())
+            );
+            self.connection
+                .execute(
+                    &sql,
+                    rusqlite::params_from_iter(
+                        <_>::into_iter([
+                            &knowledge.level.get() as &dyn ToSql,
+                            &knowledge.safety_net,
+                        ])
+                        .chain(cards.map(|card| card.as_sql() as &dyn ToSql)),
+                    ),
                 )
                 .map_err(SetKnowledgeErrorKind::Insert)?;
         }
@@ -185,14 +218,7 @@ impl Database {
             let cards = cards.into_iter();
             let cards_len = cards.len();
 
-            let mut sql = "SELECT knowledge_level FROM v1 WHERE card IN (".to_owned();
-            if cards_len != 0 {
-                sql.push('?');
-            }
-            for _ in 1..cards_len {
-                sql.push_str(",?");
-            }
-            sql.push(')');
+            let sql = format!("SELECT knowledge_level FROM v1 WHERE {}", card_in(&cards));
 
             let mut retrieved = 0;
 
@@ -230,22 +256,11 @@ impl Database {
     {
         (|| {
             let cards = cards.into_iter();
-            let cards_len = cards.len();
 
-            let mut query_sql =
-                "SELECT COUNT(*) FROM v1 WHERE knowledge_level = 3 AND card IN (".to_owned();
-            let mut sql =
-                "UPDATE v1 SET knowledge_level = 2, safety_net = false WHERE card IN (".to_owned();
-            if cards_len != 0 {
-                query_sql.push('?');
-                sql.push('?');
-            }
-            for _ in 1..cards_len {
-                query_sql.push_str(",?");
-                sql.push_str(",?");
-            }
-            query_sql.push(')');
-            sql.push(')');
+            let query_sql = format!(
+                "SELECT COUNT(*) FROM v1 WHERE knowledge_level = 3 AND {}",
+                card_in(&cards)
+            );
 
             let transaction = self
                 .connection
@@ -258,6 +273,11 @@ impl Database {
             )?;
 
             if learnt == cards.len() {
+                let sql = format!(
+                    "UPDATE v1 SET knowledge_level = 2, safety_net = false WHERE {}",
+                    card_in(&cards)
+                );
+
                 transaction
                     .execute(&sql, rusqlite::params_from_iter(cards.map(CardKey::as_sql)))?;
             }
@@ -287,7 +307,7 @@ pub struct OpenInMemoryError {
     inner: rusqlite::Error,
 }
 
-/// Error in [`Database::knowledge`].
+/// Error in [`Database::knowledge`] or [`Database::knowledge_all`].
 #[derive(Debug, Error)]
 #[error("failed to retrieve knowledge of a card")]
 pub struct GetKnowledgeError {
@@ -295,7 +315,7 @@ pub struct GetKnowledgeError {
     inner: rusqlite::Error,
 }
 
-/// Error in [`Database::set_knowledge`].
+/// Error in [`Database::set_knowledge`] or [`Database::set_knowledge_all`].
 #[derive(Debug, Error)]
 #[error("failed to set the knowledge of a card")]
 pub struct SetKnowledgeError(
@@ -342,6 +362,40 @@ pub struct GetLevelDistributionError {
 pub struct MakeIncompleteError {
     #[source]
     inner: rusqlite::Error,
+}
+
+fn card_in<I: ExactSizeIterator>(iter: &I) -> CardIn {
+    CardIn(iter.len())
+}
+struct CardIn(usize);
+impl Display for CardIn {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("card IN (")?;
+        CommaSeparated('?', self.0).fmt(f)?;
+        f.write_str(")")?;
+        Ok(())
+    }
+}
+
+struct CommaSeparated<T>(T, usize);
+impl<T: Display> Display for CommaSeparated<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        CommaSeparatedWith(|_, f| self.0.fmt(f), self.1).fmt(f)
+    }
+}
+
+struct CommaSeparatedWith<F: Fn(usize, &mut Formatter<'_>) -> fmt::Result>(F, usize);
+impl<F: Fn(usize, &mut Formatter<'_>) -> fmt::Result> Display for CommaSeparatedWith<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.1 != 0 {
+            self.0(0, f)?;
+        }
+        for i in 1..self.1 {
+            f.write_str(",")?;
+            self.0(i, f)?;
+        }
+        Ok(())
+    }
 }
 
 #[test]
@@ -436,6 +490,20 @@ fn test_database() {
 
     db.make_incomplete(&cards).unwrap();
     assert_knowledge(&db, [(2, false), (2, false)]);
+
+    for level in 0..=3 {
+        let level = KnowledgeLevel(level);
+        for safety_net in [false, true] {
+            let knowledge = Knowledge { level, safety_net };
+            db.set_knowledge_all(&cards, knowledge).unwrap();
+
+            if level.get() == 0 {
+                assert_knowledge(&db, [(0, false); 2]);
+            } else {
+                assert_knowledge(&db, [(level.get(), safety_net); 2]);
+            }
+        }
+    }
 }
 
 /// A unique key that every card has.
@@ -471,7 +539,7 @@ impl CardKey {
         Self(bincode)
     }
 
-    fn as_sql(&self) -> impl ToSql + '_ {
+    fn as_sql(&self) -> &impl ToSql {
         &self.0
     }
 

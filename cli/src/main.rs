@@ -1,7 +1,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
@@ -12,7 +12,7 @@ use directories::ProjectDirs;
 use structopt::StructOpt;
 use thiserror::Error;
 
-use revise_database::{CardKey, Database};
+use revise_database::{CardKey, Database, Knowledge};
 use revise_set_parser::{ParseError, Set};
 
 mod ui;
@@ -39,6 +39,13 @@ enum Opts {
     /// Check one or more sets syntactically, but don't learn anything.
     Check {
         /// The sets to check.
+        #[structopt(required = true)]
+        sets: Vec<PathBuf>,
+    },
+
+    /// Clear the recorded knowledge of all the cards in the given sets.
+    Clear {
+        /// The sets to clear all knowledge of.
         #[structopt(required = true)]
         sets: Vec<PathBuf>,
     },
@@ -79,6 +86,7 @@ trait Reporter {
         self.report(Report::error_chain(error));
     }
 }
+
 fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
     match Opts::from_args() {
         Opts::Learn { sets, invert } => {
@@ -135,6 +143,39 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
             }
 
             result?;
+        }
+        Opts::Clear { sets } => {
+            let mut result = Ok(());
+
+            let sources = sets
+                .into_iter()
+                .filter_map(|path| read_file(path, reporter).map_err(|e| result = Err(e)).ok())
+                .collect::<Vec<_>>();
+
+            let cards = sources
+                .iter()
+                .filter_map(|source| {
+                    parse_set(source, reporter)
+                        .map_err(|()| result = Err(()))
+                        .ok()
+                        .map(|set| {
+                            set.cards.into_iter().flat_map(|card| {
+                                [
+                                    CardKey::new(&card.terms, &card.definitions),
+                                    CardKey::new(&card.definitions, &card.terms),
+                                ]
+                            })
+                        })
+                })
+                .flatten()
+                .collect::<HashSet<_>>();
+
+            result?;
+
+            open_database()
+                .map_err(|e| reporter.error_chain(e))?
+                .set_knowledge_all(&cards, Knowledge::default())
+                .map_err(|e| reporter.error_chain(e))?;
         }
     }
 
