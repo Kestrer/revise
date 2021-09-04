@@ -9,8 +9,8 @@ blank line = { ws } , comment ;
 title = { ws } , character - ws - '#' , { character - '#' } , comment ;
 card = { ws } , options , { ws }+ , '-' , { ws }+ , options , { ws } , comment ;
 options = ( option | ',' , [ { ws } , option ] ) , { { ws } , ',' , [ { ws } , option ] } ;
-option = option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
-option atom = character - ',' - '-' - whitespace - '"' - '#' | quoted ;
+option = quoted | option atom - '"' , { [ { '-' }+ | { option ws }+ ] , option atom } ;
+option atom = character - ',' - '-' - whitespace - '#' ;
 option ws = whitespace - control ;
 quoted = '"' , { '\"' | '\\' | character - '"' - '\' } , '"' ;
 comment = [ '#' , { character } ] ;
@@ -35,8 +35,8 @@ card =
 	{ ws } , options , ( { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ] | { ws } ) , comment |
 	                     { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ]            , comment ;
 options = ( option | ',' , [ { ws } , option ] ) , { { ws } , ',' , [ { ws } , option ] } ;
-option = option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
-option atom = quoted | character - ',' - '-' - whitespace - '#' ;
+option = quoted | option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
+option atom = character - ',' - '-' - whitespace - '#' ;
 option ws = whitespace - '\r' - '\n' ;
 quoted = '"' , { '\' , [ any ] | character - '"' } , [ '"' ] ;
 comment = [ '#' , { character } ] ;
@@ -54,8 +54,8 @@ any = ? any Unicode Scalar Value ? ;
 	non-backtracking.
 *)
 guess = { whitespace } , [ option , { whitespace } ] , { ',' , { whitespace } , [ option , { whitespace } ] } ;
-option = option atom , { { whitespace } , option atom } ;
-option atom = quoted | any - ',' - whitespace ;
+option = quoted | option atom , { { whitespace } , option atom } ;
+option atom = any - ',' - whitespace ;
 quoted = '"' , { '\' , [ any ] | any - '"' } , [ '"' ] ;
 whitespace = ? any White_Space Unicode character ? ;
 any = ? any Unicode Scalar Value ? ;

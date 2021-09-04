@@ -57,42 +57,44 @@ fn parse_guess_inner(cx: &mut ParseContext<'_>) -> BTreeSet<String> {
 }
 
 fn parse_option(cx: &mut ParseContext<'_>) -> Result<String, NoMatch> {
-    let mut value = String::new();
+    parse_quoted(cx).or_else(|NoMatch| {
+        let mut value = String::new();
 
-    parse_option_atom(cx, &mut value)?;
+        value.push(parse_option_atom(cx)?);
 
-    loop {
-        let old_value_len = value.len();
+        loop {
+            let old_value_len = value.len();
 
-        let res = cx.try_parse(|cx| {
-            while let Ok(c) = parse_whitespace(cx) {
-                value.push(c);
+            let res = cx.try_parse(|cx| {
+                while let Ok(c) = parse_whitespace(cx) {
+                    value.push(c);
+                }
+                value.push(parse_option_atom(cx)?);
+                Ok(())
+            });
+            if res.is_err() {
+                value.truncate(old_value_len);
+                break;
             }
-            parse_option_atom(cx, &mut value)
-        });
-        if res.is_err() {
-            value.truncate(old_value_len);
-            break;
         }
-    }
 
-    Ok(value)
-}
-
-fn parse_option_atom(cx: &mut ParseContext<'_>, value: &mut String) -> Result<(), NoMatch> {
-    parse_quoted(cx, value).or_else(|NoMatch| {
-        cx.try_parse(|cx| {
-            parse_any(cx)
-                .ok()
-                .filter(|&c| c != ',' && !c.is_whitespace())
-                .ok_or(NoMatch)
-        })
-        .map(|c| value.push(c))
+        Ok(value)
     })
 }
 
-fn parse_quoted(cx: &mut ParseContext<'_>, value: &mut String) -> Result<(), NoMatch> {
+fn parse_option_atom(cx: &mut ParseContext<'_>) -> Result<char, NoMatch> {
+    cx.try_parse(|cx| {
+        parse_any(cx)
+            .ok()
+            .filter(|&c| c != ',' && !c.is_whitespace())
+            .ok_or(NoMatch)
+    })
+}
+
+fn parse_quoted(cx: &mut ParseContext<'_>) -> Result<String, NoMatch> {
     parse_exact_char(cx, '"')?;
+
+    let mut value = String::new();
 
     loop {
         match parse_any(cx) {
@@ -106,7 +108,7 @@ fn parse_quoted(cx: &mut ParseContext<'_>, value: &mut String) -> Result<(), NoM
         }
     }
 
-    Ok(())
+    Ok(value)
 }
 
 fn parse_whitespace(cx: &mut ParseContext<'_>) -> Result<char, NoMatch> {
@@ -152,4 +154,5 @@ fn test() {
     assert_eq!(parse_guess("\"a,b\""), guess!("a,b"));
     assert_eq!(parse_guess("\"\\\"\\\\\""), guess!("\"\\"));
     assert_eq!(parse_guess(" - - , -- -- "), guess!("- -", "-- --"));
+    assert_eq!(parse_guess("a\",b\"\""), guess!("a\"", "b\"\""));
 }

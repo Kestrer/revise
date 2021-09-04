@@ -422,33 +422,37 @@ fn test_parse_options() {
 }
 
 fn parse_option(cx: &mut ParseContext<'_, '_>) -> Result<String, NoMatch> {
-    let mut value = String::new();
+    parse_quoted(cx).or_else(|NoMatch| {
+        let mut value = String::new();
 
-    parse_option_atom(cx, &mut value)?;
+        value.push(parse_option_atom(cx)?);
 
-    loop {
-        let old_value_len = value.len();
+        loop {
+            let old_value_len = value.len();
 
-        let res = cx.try_parse(|cx| {
-            if cx.remaining.starts_with('-') {
-                while parse_exact_char(cx, '-').is_ok() {
-                    value.push('-');
+            let res = cx.try_parse(|cx| {
+                if cx.remaining.starts_with('-') {
+                    while parse_exact_char(cx, '-').is_ok() {
+                        value.push('-');
+                    }
+                } else {
+                    while let Ok(c) = parse_option_ws(cx) {
+                        value.push(c);
+                    }
                 }
-            } else {
-                while let Ok(c) = parse_option_ws(cx) {
-                    value.push(c);
-                }
+
+                value.push(parse_option_atom(cx)?);
+
+                Ok(())
+            });
+            if res.is_err() {
+                value.truncate(old_value_len);
+                break;
             }
-
-            parse_option_atom(cx, &mut value)
-        });
-        if res.is_err() {
-            value.truncate(old_value_len);
-            break;
         }
-    }
 
-    Ok(value)
+        Ok(value)
+    })
 }
 
 #[test]
@@ -475,40 +479,29 @@ fn test_parse_option() {
             vec![unexpected_control_char('\u{85}', 1..3)]
         ))
     );
+    assert_eq!(parse("a\"\""), Some(("a\"\"".into(), "", Vec::new())));
 }
 
-fn parse_option_atom(cx: &mut ParseContext<'_, '_>, value: &mut String) -> Result<(), NoMatch> {
-    parse_quoted(cx, value).or_else(|NoMatch| {
-        cx.try_parse(|cx| {
-            parse_character(cx)
-                .ok()
-                .filter(|&c| c != ',' && c != '-' && c != '#' && !c.is_whitespace())
-                .ok_or(NoMatch)
-        })
-        .map(|c| value.push(c))
+fn parse_option_atom(cx: &mut ParseContext<'_, '_>) -> Result<char, NoMatch> {
+    cx.try_parse(|cx| {
+        parse_character(cx)
+            .ok()
+            .filter(|&c| c != ',' && c != '-' && c != '#' && !c.is_whitespace())
+            .ok_or(NoMatch)
     })
 }
 
 #[test]
 fn test_parse_option_atom() {
-    let parse = |input| {
-        let mut value = String::new();
-        run_parser(|cx| parse_option_atom(cx, &mut value), input)
-            .map(|((), rest, errors)| (value, rest, errors))
-    };
+    let parse = |input| run_parser(parse_option_atom, input);
 
     assert_eq!(parse(""), None);
     assert_eq!(parse(","), None);
     assert_eq!(parse("-"), None);
     assert_eq!(parse("#"), None);
     assert_eq!(parse(" "), None);
-    assert_eq!(parse("^"), Some(("^".into(), "", Vec::new())));
-    assert_eq!(parse("qq"), Some(("q".into(), "q", Vec::new())));
-    assert_eq!(parse("\"xyz\""), Some(("xyz".into(), "", Vec::new())));
-    assert_eq!(
-        parse("\""),
-        Some(("".into(), "", vec![unclosed_quote(0..1)]))
-    );
+    assert_eq!(parse("^"), Some(('^', "", Vec::new())));
+    assert_eq!(parse("qq"), Some(('q', "q", Vec::new())));
 }
 
 fn parse_option_ws(cx: &mut ParseContext<'_, '_>) -> Result<char, NoMatch> {
@@ -547,7 +540,9 @@ fn test_parse_option_ws() {
     );
 }
 
-fn parse_quoted(cx: &mut ParseContext<'_, '_>, value: &mut String) -> Result<(), NoMatch> {
+fn parse_quoted(cx: &mut ParseContext<'_, '_>) -> Result<String, NoMatch> {
+    let mut value = String::new();
+
     let string_start = cx.offset();
 
     parse_exact_char(cx, '"')?;
@@ -579,22 +574,13 @@ fn parse_quoted(cx: &mut ParseContext<'_, '_>, value: &mut String) -> Result<(),
         }
     }
 
-    Ok(())
+    Ok(value)
 }
 
 #[test]
 fn test_parse_quoted() {
     let s = |s: &str| s.to_owned();
-
-    let parse = |input| {
-        let mut output = "existing content".to_owned();
-        let res = run_parser(|cx| parse_quoted(cx, &mut output), input);
-        let output = output.strip_prefix("existing content").unwrap();
-        if res.is_none() {
-            assert_eq!(output, "");
-        }
-        res.map(|((), rest, errors)| (output.to_owned(), rest, errors))
-    };
+    let parse = |input| run_parser(parse_quoted, input);
 
     assert_eq!(parse(""), None);
     assert_eq!(parse("'"), None);
