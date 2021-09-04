@@ -17,7 +17,7 @@ unicode-width = "0.1.8"
 thiserror = "1.0.26"
 
 revise-database = { path = "../database" }
-revise-set-parser = { path = "../set-parser" }
+revise-parser = { path = "../parser" }
 
 [dev-dependencies]
 maplit = "1.0.2"

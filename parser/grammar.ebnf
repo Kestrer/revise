@@ -1,0 +1,61 @@
+(*
+	EBNF extensions used:
+	- `{ x }+` means `x , { x }`
+*)
+
+(* Grammar for a grammatically correct set *)
+set = { blank line , newline } , title , newline , { blank line , newline } , card , { newline , ( card | blank line ) } ;
+blank line = { ws } , comment ;
+title = { ws } , character - ws - '#' , { character - '#' } , comment ;
+card = { ws } , options , { ws }+ , '-' , { ws }+ , options , { ws } , comment ;
+options = ( option | ',' , [ { ws } , option ] ) , { { ws } , ',' , [ { ws } , option ] } ;
+option = option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
+option atom = character - ',' - '-' - whitespace - '"' - '#' | quoted ;
+option ws = whitespace - control ;
+quoted = '"' , { '\"' | '\\' | character - '"' - '\' } , '"' ;
+comment = [ '#' , { character } ] ;
+character = any - control ;
+newline = [ '\r' ] , '\n' ;
+ws = ' ' ;
+any = ? any Unicode Scalar Value ? ;
+whitespace = ? any White_Space Unicode character ? ;
+control = ? any Cc Unicode character ? ;
+
+(*
+	Grammar for any set, malformed or not; this grammar, crucially, is valid for _any_ input. It
+	serves to identify the various parts of the input source so that errors can be easily generated
+	when matching it against the correct, stricter grammar.
+
+	To avoid ambiguity, this grammar is eager, ordered left-first and non-backtracking.
+*)
+set = { blank line , newline } , title , { newline , ( card | blank line ) } ;
+blank line = { ws } , comment ;
+title = { character - '#' } , comment ;
+card =
+	{ ws } , options , ( { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ] | { ws } ) , comment |
+	                     { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ]            , comment ;
+options = ( option | ',' , [ { ws } , option ] ) , { { ws } , ',' , [ { ws } , option ] } ;
+option = option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
+option atom = quoted | character - ',' - '-' - whitespace - '#' ;
+option ws = whitespace - '\r' - '\n' ;
+quoted = '"' , { '\' , [ any ] | character - '"' } , [ '"' ] ;
+comment = [ '#' , { character } ] ;
+character = any - '\r' - '\n' ;
+ws = whitespace - '\r' - '\n' ;
+newline = '\r' , [ '\n' ] | '\n' ;
+whitespace = ? any White_Space Unicode character ? ;
+control = ? any Cc Unicode character ? ;
+any = ? any Unicode Scalar Value ? ;
+
+(*
+	Grammar for a guess.
+
+	Similarly to the above grammar, it is valid for any input, eager, ordered left-first and
+	non-backtracking.
+*)
+guess = { whitespace } , [ option , { whitespace } ] , { ',' , { whitespace } , [ option , { whitespace } ] } ;
+option = option atom , { { whitespace } , option atom } ;
+option atom = quoted | any - ',' - whitespace ;
+quoted = '"' , { '\' , [ any ] | any - '"' } , [ '"' ] ;
+whitespace = ? any White_Space Unicode character ? ;
+any = ? any Unicode Scalar Value ? ;

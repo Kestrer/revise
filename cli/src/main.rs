@@ -13,14 +13,16 @@ use structopt::StructOpt;
 use thiserror::Error;
 
 use revise_database::{CardKey, Database, Knowledge};
-use revise_set_parser::{ParseError, Set};
+use revise_parser::Set;
 
 mod ui;
 
 mod learn;
 
 mod report;
-use report::{Annotation, Report, Source};
+use report::{Report, Source};
+
+mod report_parse_error;
 
 #[derive(StructOpt)]
 #[structopt(name = "revise", author = "Kestrer")]
@@ -92,28 +94,22 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
         Opts::Learn { sets, invert } => {
             let mut result = Ok(());
 
-            let sources = sets
+            let sets: Vec<_> = sets
                 .into_iter()
-                .filter_map(|path| read_file(path, reporter).map_err(|e| result = Err(e)).ok())
-                .collect::<Vec<_>>();
+                .filter_map(|path| record_err(read_set_file(path, reporter), &mut result))
+                .collect();
+
+            result?;
 
             let mut title = String::new();
             let mut cards = HashMap::new();
 
-            for source in &sources {
-                let set = match parse_set(source, reporter) {
-                    Ok(set) => set,
-                    Err(()) => {
-                        result = Err(());
-                        continue;
-                    }
-                };
-
+            for set in sets {
                 if title.is_empty() {
-                    title = set.title.to_owned();
+                    title = set.title;
                 } else {
                     title.push_str(" + ");
-                    title.push_str(set.title);
+                    title.push_str(&set.title);
                 }
 
                 cards.extend(set.cards.into_iter().map(|mut card| {
@@ -124,8 +120,6 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
                 }));
             }
 
-            result?;
-
             let mut database = open_database().map_err(|e| reporter.error_chain(e))?;
             learn::learn(&mut database, &title, &cards, &mut io::stdout().lock())
                 .map_err(|e| reporter.error_chain(&*e))?;
@@ -133,13 +127,8 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
         Opts::Check { sets } => {
             let mut result = Ok(());
 
-            for path in sets {
-                if read_file(path, reporter)
-                    .and_then(|source| parse_set(&source, reporter).map(drop))
-                    .is_err()
-                {
-                    result = Err(());
-                }
+            for set in sets {
+                record_err(read_set_file(set, reporter), &mut result);
             }
 
             result?;
@@ -147,27 +136,17 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
         Opts::Clear { sets } => {
             let mut result = Ok(());
 
-            let sources = sets
+            let cards = sets
                 .into_iter()
-                .filter_map(|path| read_file(path, reporter).map_err(|e| result = Err(e)).ok())
-                .collect::<Vec<_>>();
-
-            let cards = sources
-                .iter()
-                .filter_map(|source| {
-                    parse_set(source, reporter)
-                        .map_err(|()| result = Err(()))
-                        .ok()
-                        .map(|set| {
-                            set.cards.into_iter().flat_map(|card| {
-                                [
-                                    CardKey::new(&card.terms, &card.definitions),
-                                    CardKey::new(&card.definitions, &card.terms),
-                                ]
-                            })
-                        })
+                .filter_map(|set| record_err(read_set_file(set, reporter), &mut result))
+                .flat_map(|set| {
+                    set.cards.into_iter().flat_map(|card| {
+                        [
+                            CardKey::new(&card.terms, &card.definitions),
+                            CardKey::new(&card.definitions, &card.terms),
+                        ]
+                    })
                 })
-                .flatten()
                 .collect::<HashSet<_>>();
 
             result?;
@@ -182,7 +161,7 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
     Ok(())
 }
 
-fn read_file<P: AsRef<Path>>(path: P, reporter: &mut impl Reporter) -> Result<Source, ()> {
+fn read_set_file<P: AsRef<Path>>(path: P, reporter: &mut impl Reporter) -> Result<Set, ()> {
     let path = path.as_ref();
 
     if path.extension() != Some("set".as_ref()) {
@@ -193,96 +172,20 @@ fn read_file<P: AsRef<Path>>(path: P, reporter: &mut impl Reporter) -> Result<So
         ));
     }
 
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(Source {
+    let text = fs::read_to_string(path).map_err(|e| {
+        reporter.report(report::error!("couldn't read to {}: {}", path.display(), e));
+    })?;
+
+    revise_parser::parse_set(&text).map_err(|errors| {
+        let source = Source {
             origin: Some(path.to_string_lossy().into_owned()),
             text,
-        }),
-        Err(e) => {
-            reporter.report(report::error!("couldn't read {}: {}", path.display(), e));
-            Err(())
-        }
-    }
-}
+        };
 
-fn parse_set<'a>(source: &'a Source, reporter: &mut impl Reporter) -> Result<Set<'a>, ()> {
-    revise_set_parser::parse(&source.text).map_err(|errors| {
         for error in errors {
-            reporter.report(report_parse_error(&error, &source));
+            reporter.report(self::report_parse_error::report_parse_error(&source, error));
         }
     })
-}
-
-fn report_parse_error<'a>(error: &ParseError, source: &'a Source) -> Report<'a> {
-    match error {
-        ParseError::NoTitle(span) => {
-            Report::error("set does not have a title").with_section(span.clone().map_or_else(
-                || source.label_all(Annotation::error("expected a title")),
-                |span| source.label(span, Annotation::error("expected a title")),
-            ))
-        }
-        ParseError::SecondLineNotEmpty(span) => Report::error("second line is not empty")
-            .with_section(source.label(span, Annotation::error("this line must be empty")))
-            .with_footer(Annotation::help("consider moving your cards down a line")),
-        ParseError::EmptySet => Report::error("expected one or more cards in the set")
-            .with_section(source.label_all(Annotation::error("no cards found in this set"))),
-        ParseError::EmptyOption { side, span } => Report::error(format!("empty {}", side))
-            .with_section(
-                source.label(span, Annotation::error(format!("expected a {} here", side))),
-            )
-            .with_footer(Annotation::help("consider filling in a value")),
-        ParseError::DuplicateOption {
-            side,
-            original,
-            duplicate,
-        } => Report::error(format!("duplicate {}", side)).with_section(
-            source
-                .label(
-                    original,
-                    Annotation::warning(format!("original {} here", side)),
-                )
-                .label(
-                    duplicate,
-                    Annotation::error(format!("{} declared again here", side)),
-                ),
-        ),
-        ParseError::NoDefinitions(span) => Report::error("no definitions provided")
-            .with_section(source.label(
-                span,
-                Annotation::error("expected a list of definitions in this card"),
-            ))
-            .with_footer(Annotation::help(
-                "add a comma-separated list of definitions to this card after a ` - ` separator",
-            )),
-        ParseError::ThirdPart { before, span } => {
-            Report::error("encountered unexpected third section")
-                .with_section(
-                    source
-                        .label(
-                            span,
-                            Annotation::error("unexpected third section to the card"),
-                        )
-                        .label(
-                            before,
-                            Annotation::warning("this card already has terms and definitions"),
-                        ),
-                )
-                .with_footer(Annotation::help(
-                    "consider removing the unnecessary section",
-                ))
-        }
-        ParseError::DuplicateCard {
-            original,
-            duplicate,
-        } => Report::error("encountered duplicate card").with_section(
-            source
-                .label(original, Annotation::warning("original card declared here"))
-                .label(
-                    duplicate,
-                    Annotation::error("identical card declared again here"),
-                ),
-        ),
-    }
 }
 
 fn open_database() -> Result<Database, OpenDatabaseError> {
@@ -314,4 +217,8 @@ enum OpenDatabaseErrorInner {
     CreateDir { path: PathBuf, source: io::Error },
     #[error(transparent)]
     Open(revise_database::OpenError),
+}
+
+fn record_err<T, U, E>(res: Result<T, E>, other: &mut Result<U, E>) -> Option<T> {
+    res.map_err(|e| *other = Err(e)).ok()
 }

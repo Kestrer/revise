@@ -1,2 +1,2 @@
 [workspace]
-members = ["database", "set-parser", "cli"]
+members = ["database", "parser", "cli"]

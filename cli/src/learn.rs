@@ -15,12 +15,12 @@ use rand::seq::IteratorRandom as _;
 use rand::Rng;
 
 use revise_database::{CardKey, Database};
-use revise_set_parser::Card;
+use revise_parser::Card;
 
 pub fn learn(
     database: &mut Database,
     title: &str,
-    cards: &HashMap<CardKey, Card<'_>>,
+    cards: &HashMap<CardKey, Card>,
     mut out: impl io::Write,
 ) -> anyhow::Result<()> {
     database.make_incomplete(cards.keys())?;
@@ -61,10 +61,9 @@ pub fn learn(
         write!(out, "{}", "Term: ".dim())?;
         out.flush()?;
         let answer = match crate::ui::read_line(&mut out)? {
-            Some(line) => line,
+            Some(line) => revise_parser::parse_guess(&line),
             None => break,
         };
-        let answer = answer.split(',').map(str::trim).collect::<BTreeSet<_>>();
 
         let correct = if card.definitions == answer {
             true
@@ -98,12 +97,11 @@ pub fn learn(
                     )?;
                     out.flush()?;
                     let answer = match crate::ui::read_line(&mut out)? {
-                        Some(line) => line,
+                        Some(line) => revise_parser::parse_guess(&line),
                         None => break,
                     };
-                    let answer = answer.split(',').map(str::trim).collect::<BTreeSet<_>>();
 
-                    if answer == card.definitions {
+                    if card.definitions == answer {
                         break;
                     }
                 }
@@ -144,7 +142,7 @@ fn enter_raw() -> io::Result<impl Drop> {
     }))
 }
 
-struct DisplayAnswer<'a>(&'a BTreeSet<&'a str>);
+struct DisplayAnswer<'a>(&'a BTreeSet<String>);
 impl Display for DisplayAnswer<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut answers = self.0.iter();

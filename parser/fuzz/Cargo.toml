@@ -1,5 +1,5 @@
 [package]
-name = "revise-set-parser-fuzz"
+name = "revise-parser-fuzz"
 version = "0.0.0"
 edition = "2018"
 publish = false
@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.revise-set-parser]
+[dependencies.revise-parser]
 path = ".."
 
 # Prevent this from interfering with workspaces
@@ -18,7 +18,13 @@ path = ".."
 members = ["."]
 
 [[bin]]
-name = "parse"
-path = "fuzz_targets/parse.rs"
+name = "parse_set"
+path = "fuzz_targets/parse_set.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_guess"
+path = "fuzz_targets/parse_guess.rs"
 test = false
 doc = false

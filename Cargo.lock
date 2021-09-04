@@ -436,7 +436,7 @@ dependencies = [
  "maplit",
  "rand",
  "revise-database",
- "revise-set-parser",
+ "revise-parser",
  "scopeguard",
  "structopt",
  "thiserror",
@@ -455,11 +455,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "revise-set-parser"
+name = "revise-parser"
 version = "0.0.0"
 dependencies = [
  "maplit",
- "unicode-width",
 ]
 
 [[package]]

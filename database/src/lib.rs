@@ -110,7 +110,7 @@ impl Database {
                 )?
                 .collect::<Result<HashMap<_, _>, _>>()?;
 
-            Ok(cards.map(move |card| result.get(&card).copied().unwrap_or_default()))
+            Ok(cards.map(move |card| result.get(card).copied().unwrap_or_default()))
         })()
         .map_err(|inner| GetKnowledgeError { inner })
     }
@@ -416,8 +416,8 @@ fn test_database() {
             let level = KnowledgeLevel(level);
             for safety_net in [false, true] {
                 let knowledge = Knowledge { level, safety_net };
-                db.set_knowledge(&card, knowledge).unwrap();
-                let stored = db.knowledge(&card).unwrap();
+                db.set_knowledge(card, knowledge).unwrap();
+                let stored = db.knowledge(card).unwrap();
                 assert_eq!(stored.level.get(), knowledge.level.get());
                 if knowledge.level.get() == 0 {
                     assert!(!stored.safety_net);
