@@ -422,37 +422,45 @@ fn test_parse_options() {
 }
 
 fn parse_option(cx: &mut ParseContext<'_, '_>) -> Result<String, NoMatch> {
-    parse_quoted(cx).or_else(|NoMatch| {
-        let mut value = String::new();
+    let (mut value, after_quote) = match parse_quoted(cx) {
+        Ok(quoted) => (quoted, Some(cx.offset())),
+        Err(NoMatch) => (String::from(parse_option_atom(cx)?), None),
+    };
 
-        value.push(parse_option_atom(cx)?);
+    let mut trailing_atoms = false;
 
-        loop {
-            let old_value_len = value.len();
+    loop {
+        let old_value_len = value.len();
 
-            let res = cx.try_parse(|cx| {
-                if cx.remaining.starts_with('-') {
-                    while parse_exact_char(cx, '-').is_ok() {
-                        value.push('-');
-                    }
-                } else {
-                    while let Ok(c) = parse_option_ws(cx) {
-                        value.push(c);
-                    }
+        let res = cx.try_parse(|cx| {
+            if cx.remaining.starts_with('-') {
+                while parse_exact_char(cx, '-').is_ok() {
+                    value.push('-');
                 }
-
-                value.push(parse_option_atom(cx)?);
-
-                Ok(())
-            });
-            if res.is_err() {
-                value.truncate(old_value_len);
-                break;
+            } else {
+                while let Ok(c) = parse_option_ws(cx) {
+                    value.push(c);
+                }
             }
-        }
 
-        Ok(value)
-    })
+            value.push(parse_option_atom(cx)?);
+
+            Ok(())
+        });
+        if res.is_err() {
+            value.truncate(old_value_len);
+            break;
+        }
+        trailing_atoms = true;
+    }
+
+    if let (true, Some(after_quote)) = (trailing_atoms, after_quote) {
+        cx.errors.push(ParseError::TrailingOptionChars {
+            span: after_quote..cx.offset(),
+        });
+    }
+
+    Ok(value)
 }
 
 #[test]
@@ -480,6 +488,10 @@ fn test_parse_option() {
         ))
     );
     assert_eq!(parse("a\"\""), Some(("a\"\"".into(), "", Vec::new())));
+    assert_eq!(
+        parse("\"a\"bc\n"),
+        Some(("abc".into(), "\n", vec![trailing_option_chars(3..5)]))
+    );
 }
 
 fn parse_option_atom(cx: &mut ParseContext<'_, '_>) -> Result<char, NoMatch> {
@@ -867,6 +879,12 @@ pub enum ParseError {
         span: Range<usize>,
     },
 
+    /// There were trailing characters after a closing quote in an option.
+    TrailingOptionChars {
+        /// The span of the trailing characters.
+        span: Range<usize>,
+    },
+
     /// An unknown character escape was used in a quoted section.
     UnknownEscape {
         /// The character after the backslash.
@@ -948,6 +966,7 @@ mod test_utils {
         fn no_definitions(card: Range<usize>) = NoDefinitions,
         fn duplicate_option(original: Range<usize>, duplicate: Range<usize>) = DuplicateOption,
         fn empty_option(span: Range<usize>) = EmptyOption,
+        fn trailing_option_chars(span: Range<usize>) = TrailingOptionChars,
         fn unknown_escape(escape: char, span: Range<usize>) = UnknownEscape,
         fn unclosed_quote(span: Range<usize>) = UnclosedQuote,
         fn unexpected_control_char(character: char, span: Range<usize>) = UnexpectedControlChar,

@@ -35,7 +35,7 @@ card =
 	{ ws } , options , ( { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ] | { ws } ) , comment |
 	                     { ws } , '-' , { ws } , [ options , { ws } ] , [ '-' , { character - '#' } ]            , comment ;
 options = ( option | ',' , [ { ws } , option ] ) , { { ws } , ',' , [ { ws } , option ] } ;
-option = quoted | option atom , { [ { '-' }+ | { option ws }+ ] , option atom } ;
+option = ( quoted | option atom ) , { [ { '-' }+ | { option ws }+ ] , option atom } ;
 option atom = character - ',' - '-' - whitespace - '#' ;
 option ws = whitespace - '\r' - '\n' ;
 quoted = '"' , { '\' , [ any ] | character - '"' } , [ '"' ] ;
@@ -54,7 +54,7 @@ any = ? any Unicode Scalar Value ? ;
 	non-backtracking.
 *)
 guess = { whitespace } , [ option , { whitespace } ] , { ',' , { whitespace } , [ option , { whitespace } ] } ;
-option = quoted | option atom , { { whitespace } , option atom } ;
+option = ( quoted | option atom ) , { { whitespace } , option atom } ;
 option atom = any - ',' - whitespace ;
 quoted = '"' , { '\' , [ any ] | any - '"' } , [ '"' ] ;
 whitespace = ? any White_Space Unicode character ? ;

@@ -57,29 +57,28 @@ fn parse_guess_inner(cx: &mut ParseContext<'_>) -> BTreeSet<String> {
 }
 
 fn parse_option(cx: &mut ParseContext<'_>) -> Result<String, NoMatch> {
-    parse_quoted(cx).or_else(|NoMatch| {
-        let mut value = String::new();
+    let mut value = match parse_quoted(cx) {
+        Ok(quoted) => quoted,
+        Err(NoMatch) => String::from(parse_option_atom(cx)?),
+    };
 
-        value.push(parse_option_atom(cx)?);
+    loop {
+        let old_value_len = value.len();
 
-        loop {
-            let old_value_len = value.len();
-
-            let res = cx.try_parse(|cx| {
-                while let Ok(c) = parse_whitespace(cx) {
-                    value.push(c);
-                }
-                value.push(parse_option_atom(cx)?);
-                Ok(())
-            });
-            if res.is_err() {
-                value.truncate(old_value_len);
-                break;
+        let res = cx.try_parse(|cx| {
+            while let Ok(c) = parse_whitespace(cx) {
+                value.push(c);
             }
+            value.push(parse_option_atom(cx)?);
+            Ok(())
+        });
+        if res.is_err() {
+            value.truncate(old_value_len);
+            break;
         }
+    }
 
-        Ok(value)
-    })
+    Ok(value)
 }
 
 fn parse_option_atom(cx: &mut ParseContext<'_>) -> Result<char, NoMatch> {
@@ -155,4 +154,5 @@ fn test() {
     assert_eq!(parse_guess("\"\\\"\\\\\""), guess!("\"\\"));
     assert_eq!(parse_guess(" - - , -- -- "), guess!("- -", "-- --"));
     assert_eq!(parse_guess("a\",b\"\""), guess!("a\"", "b\"\""));
+    assert_eq!(parse_guess("\"m\"x,"), guess!("mx"));
 }

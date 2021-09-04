@@ -23,6 +23,7 @@ pub(crate) fn report_parse_error(source: &Source, error: ParseError) -> Report<'
             duplicate,
         } => duplicate_option(source, original, duplicate),
         ParseError::EmptyOption { span } => empty_option(source, span),
+        ParseError::TrailingOptionChars { span } => trailing_option_chars(source, span),
         ParseError::UnknownEscape { escape, span } => unknown_escape(source, escape, span),
         ParseError::UnclosedQuote { span } => unclosed_quote(source, span),
         ParseError::UnexpectedControlChar { character, span } => {
@@ -119,6 +120,11 @@ fn empty_option(source: &Source, span: Range<usize>) -> Report<'_> {
     Report::error("empty option")
         .with_section(source.label(span, Annotation::error("expected a value here")))
         .with_footer(Annotation::help("consider filling in a value"))
+}
+
+fn trailing_option_chars(source: &Source, span: Range<usize>) -> Report<'_> {
+    Report::error("characters after a quote in an option")
+        .with_section(source.label(span, Annotation::help("remove these characters")))
 }
 
 fn unknown_escape(source: &Source, escape: char, span: Range<usize>) -> Report<'_> {
