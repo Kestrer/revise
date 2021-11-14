@@ -57,19 +57,16 @@ pub(crate) fn read_line(mut out: impl io::Write) -> io::Result<Option<String>> {
             _ => (),
         }
 
+        let (cols, _) = terminal::size()?;
+
         queue!(
             out,
             cursor::MoveTo(start_x, start_y),
-            terminal::Clear(ClearType::UntilNewLine)
+            terminal::Clear(ClearType::FromCursorDown)
         )?;
         out.write_all(line.as_bytes())?;
-        queue!(
-            out,
-            cursor::MoveTo(
-                start_x + u16::try_from(line[..position].width()).unwrap(),
-                start_y
-            )
-        )?;
+        let x = start_x + u16::try_from(line[..position].width()).unwrap();
+        queue!(out, cursor::MoveTo(x % cols, start_y + x / cols))?;
         out.flush()?;
     }
 
