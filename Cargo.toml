@@ -12,10 +12,14 @@ axum-server = { version = "0.3.2", features = ["tls-rustls"] }
 headers = "0.3.5"
 log = "0.4.14"
 pretty_env_logger = "0.4.0"
+rand = "0.8.4"
 serde = { version = "1.0.130", features = ["derive"] }
 sqlx = { version = "0.5.9", features = ["runtime-tokio-rustls", "postgres", "migrate"] }
 structopt = "0.3.25"
 tokio = { version = "1.14.0", features = ["macros", "rt-multi-thread", "process", "signal"] }
 tower = "0.4.11"
-tower-http = { version = "0.1.2", features = ["fs", "compression-br"] }
-rand = "0.8.4"
+tower-http = { version = "0.1.2", features = ["fs"] }
+
+[build-dependencies]
+base64 = "0.13.0"
+md-5 = "0.9.1"

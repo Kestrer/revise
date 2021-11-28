@@ -9,11 +9,11 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS cards (
 	id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
 	owner INT8 REFERENCES users ON DELETE CASCADE NOT NULL,
-	terms TEXT NOT NULL,
-	definitions TEXT NOT NULL,
+	terms TEXT CHECK(terms SIMILAR TO E'\n*[^\n].*') NOT NULL,
+	definitions TEXT CHECK(definitions SIMILAR TO E'\n*[^\n].*') NOT NULL,
 	case_sensitive BOOLEAN NOT NULL,
-	knowledge INT2 CHECK(knowledge >= 0 AND knowledge <= 3) NOT NULL,
-	safety_net BOOLEAN NOT NULL
+	knowledge INT2 CHECK(knowledge >= 0 AND knowledge <= 3) NOT NULL DEFAULT 0,
+	safety_net BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS tags (

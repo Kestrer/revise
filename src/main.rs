@@ -1,10 +1,11 @@
-use std::{convert::Infallible, net::SocketAddr, path::PathBuf, time::Duration};
+#![allow(clippy::single_component_path_imports)] // https://github.com/rust-lang/rust-clippy/issues/7923
+
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use axum::{
     async_trait,
     body::{self, BoxBody, Bytes, HttpBody},
-    error_handling::HandleErrorExt as _,
     extract::{Extension, Form, FromRequest, RequestParts},
     handler::Handler as _,
     http::{
@@ -13,27 +14,25 @@ use axum::{
         HeaderMap, HeaderValue, Request, Response, StatusCode, Uri,
     },
     response::{IntoResponse, Redirect},
-    routing::{
-        handler_method_routing::{get, post},
-        service_method_routing::get as get_service,
-    },
-    Router,
+    routing::handler_method_routing::{get, post},
+    AddExtensionLayer, Json, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
 use headers::{CacheControl, ContentType, HeaderMapExt as _};
 use rand::seq::SliceRandom;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate,
     migrate::MigrateDatabase as _,
     postgres::{PgPool, Postgres},
 };
 use structopt::StructOpt;
-use tokio::{fs, process::Command, signal, task};
-use tower::{Service, ServiceBuilder, ServiceExt};
-use tower_http::{
-    add_extension::AddExtensionLayer, compression::CompressionLayer, services::fs::ServeDir,
-};
+use tokio::{signal, task};
+use tower::util::MapResponseLayer;
+
+#[cfg_attr(debug_assertions, path = "dynamic_assets.rs")]
+#[cfg_attr(not(debug_assertions), path = "static_assets.rs")]
+mod assets;
 
 #[derive(StructOpt)]
 struct Opts {
@@ -104,14 +103,7 @@ async fn main() -> anyhow::Result<()> {
         .context("database migration failed")?;
     log::info!("ran migrations");
 
-    std::env::set_current_dir("html").context("failed to change to `html` dir")?;
-    let mut watcher = Command::new("npm")
-        .arg("run")
-        .arg("watch")
-        .kill_on_drop(true)
-        .spawn()?;
-    std::env::set_current_dir("..").context("failed to reset current dir")?;
-    log::info!("spawned webpack");
+    let asset_manager = assets::AssetManager::new()?;
 
     let http_handle = axum_server::Handle::new();
     let http_server = axum_server::bind(SocketAddr::from(([0, 0, 0, 0], opts.http_port)))
@@ -150,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
 
     http_handle.shutdown();
     https_handle.shutdown();
-    let _ = watcher.kill().await;
+    asset_manager.stop().await;
     http_task
         .await
         .unwrap()
@@ -228,40 +220,45 @@ fn router(db: PgPool) -> Router {
         .route("/logout", post(logout))
         .route("/create-account", post(create_account))
         .route("/delete-account", post(delete_account))
-        .nest("/assets", get_service(assets_service()))
-        .layer(
-            ServiceBuilder::new()
-                .layer(CompressionLayer::new().br(true))
-                .layer(AddExtensionLayer::new(db)),
+        .route("/cards", get(cards).post(create_card))
+        .layer(MapResponseLayer::new(|mut res: Response<BoxBody>| {
+            res.headers_mut()
+                .typed_insert(CacheControl::new().with_private().with_no_cache());
+            res
+        }))
+        .nest(
+            "/assets",
+            assets::immutable_assets().layer(MapResponseLayer::new(|mut res: Response<_>| {
+                if res.status().as_u16() < 400 {
+                    res.headers_mut().typed_insert(
+                        CacheControl::new()
+                            .with_public()
+                            .with_max_age(Duration::from_secs(60 * 60 * 24 * 365)),
+                    );
+                }
+                res
+            })),
         )
+        .layer(AddExtensionLayer::new(db))
 }
 
-async fn index(session: Option<Session>) -> EndpointResult {
+async fn index<B>(session: Option<Session>, req: Request<B>) -> EndpointResult {
     if session.is_some() {
-        dashboard().await
+        dashboard(req).await
     } else {
-        home().await
+        home(req).await
     }
 }
 
-async fn home() -> EndpointResult {
-    serve_static_html("html/dist/home.html").await
-}
-
-async fn dashboard() -> EndpointResult {
-    serve_static_html("html/dist/dashboard.html").await
-}
-
-async fn serve_static_html(html: &str) -> EndpointResult {
-    let mut res = fs::read_to_string(html)
-        .await
-        .with_context(|| format!("failed to read static HTML file at `{}`", html))?
-        .into_response_boxed();
-
-    res.headers_mut()
-        .typed_insert(CacheControl::new().with_private().with_no_cache());
+async fn home<B>(req: Request<B>) -> EndpointResult {
+    let mut res = assets::mutable_asset!("home.html").call(req).await?;
     res.headers_mut().typed_insert(ContentType::html());
+    Ok(res)
+}
 
+async fn dashboard<B>(req: Request<B>) -> EndpointResult {
+    let mut res = assets::mutable_asset!("dashboard.html").call(req).await?;
+    res.headers_mut().typed_insert(ContentType::html());
     Ok(res)
 }
 
@@ -356,27 +353,76 @@ async fn create_account(db: Extension<PgPool>, form: Form<CreateAccount>) -> End
 }
 
 async fn delete_account(db: Extension<PgPool>, session: Session) -> EndpointResult {
-    sqlx::query("DELETE FROM users WHERE id = (SELECT for_user FROM session_cookies WHERE cookie_value = $1)")
-        .bind(&session.0)
-        .execute(&*db)
-        .await
-        .context("failed to delete account")?;
+    sqlx::query(
+        "\
+            DELETE FROM users \
+            WHERE id = (SELECT for_user FROM session_cookies WHERE cookie_value = $1)\
+        ",
+    )
+    .bind(&session.0)
+    .execute(&*db)
+    .await
+    .context("failed to delete account")?;
 
     Ok(session.clear_cookie_on(Redirect::to(Uri::from_static("/"))))
 }
 
-fn assets_service<B: Send>(
-) -> impl Service<Request<B>, Response = Response<BoxBody>, Error = Infallible, Future = impl Send> + Clone
-{
-    <_ as ServiceExt<Request<B>>>::map_response(ServeDir::new("html/dist/assets"), |mut res| {
-        res.headers_mut().typed_insert(
-            CacheControl::new()
-                .with_public()
-                .with_max_age(Duration::from_secs(60 * 60 * 24 * 365)),
-        );
-        res.map(body::boxed)
-    })
-    .handle_error(|e| EndpointError::from(anyhow::Error::new(e).context("failed to serve asset")).0)
+#[derive(sqlx::FromRow, Serialize)]
+struct Card {
+    id: i64,
+    terms: String,
+    definitions: String,
+    case_sensitive: bool,
+    knowledge: i16,
+    safety_net: bool,
+}
+
+async fn cards(db: Extension<PgPool>, session: Session) -> EndpointResult {
+    let cards: Vec<Card> = sqlx::query_as(
+        "\
+            SELECT id,terms,definitions,case_sensitive,knowledge,safety_net FROM cards \
+            WHERE owner = (SELECT for_user FROM session_cookies WHERE cookie_value = $1)\
+        ",
+    )
+    .bind(&session.0)
+    .fetch_all(&*db)
+    .await
+    .context("failed to query cards")?;
+
+    Ok(Json(cards).into_response_boxed())
+}
+
+#[derive(Deserialize)]
+struct CreateCard {
+    terms: String,
+    definitions: String,
+    case_sensitive: bool,
+}
+
+async fn create_card(
+    db: Extension<PgPool>,
+    session: Session,
+    body: Json<CreateCard>,
+) -> EndpointResult {
+    if body.terms.chars().all(|c| c == '\n') || body.definitions.chars().all(|c| c == '\n') {
+        return Err(EndpointError(StatusCode::BAD_REQUEST.into_response_boxed()));
+    }
+
+    sqlx::query(
+        "\
+            INSERT INTO cards \
+            VALUES (DEFAULT, (SELECT for_user FROM session_cookies WHERE cookie_value = $1), $2, $3, $4)\
+        "
+    )
+    .bind(&session.0)
+    .bind(&body.terms)
+    .bind(&body.definitions)
+    .bind(&body.case_sensitive)
+    .execute(&*db)
+    .await
+    .context("failed to insert card")?;
+
+    Ok(StatusCode::CREATED.into_response_boxed())
 }
 
 struct Session(String);
@@ -423,13 +469,23 @@ impl Session {
 
 #[async_trait]
 impl<B: Send> FromRequest<B> for Session {
-    type Rejection = Redirect;
+    type Rejection = SessionRejection;
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
         req.headers()
             .and_then(|headers| headers.typed_get::<headers::Cookie>())
             .and_then(|cookie| cookie.get("session").map(str::to_owned))
             .map(Self)
-            .ok_or_else(|| Redirect::to(Uri::from_static("/")))
+            .ok_or(SessionRejection)
+    }
+}
+
+struct SessionRejection;
+
+impl IntoResponse for SessionRejection {
+    type Body = BoxBody;
+    type BodyError = <BoxBody as HttpBody>::Error;
+    fn into_response(self) -> Response<Self::Body> {
+        (StatusCode::UNAUTHORIZED, "You are not logged in.").into_response_boxed()
     }
 }
 
