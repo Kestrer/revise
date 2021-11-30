@@ -1,6 +1,6 @@
 import "normalize.css";
 
-import { createMemo, createResource, createSignal } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { For } from "solid-js";
 import { JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -81,6 +81,27 @@ function App(): JSX.Element {
 
 function Card(props: { card: Card }): JSX.Element {
 	const [editing, setEditing] = createSignal(false);
+	const [deleting, setDeleting] = createSignal(false);
+
+	createEffect(() => {
+		if (!deleting()) {
+			return;
+		}
+
+		void (async () => {
+			try {
+				const res = await fetch(`/cards/${props.card.id}`, { method: "DELETE" });
+				if (!res.ok) {
+					throw new Error(`${res.status}`);
+				}
+			} catch (e) {
+				console.error(e);
+				alert(`could not delete card: ${(e as Error).toString()}`);
+			} finally {
+				setDeleting(false);
+			}
+		})();
+	});
 
 	return createMemo(() => {
 		if (editing()) {
@@ -114,6 +135,7 @@ function Card(props: { card: Card }): JSX.Element {
 				<p>{props.card.terms}</p>
 				<p>{props.card.definitions}</p>
 				<button type="button" onClick={() => setEditing(true)}>Edit</button>
+				<button type="button" disabled={deleting()} onClick={() => setDeleting(true)}>Delete</button>
 			</div>;
 		}
 	});

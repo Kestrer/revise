@@ -230,7 +230,7 @@ fn router(db: PgPool) -> Router {
         .route("/create-account", post(create_account))
         .route("/delete-account", post(delete_account))
         .route("/cards", get(cards).post(create_card))
-        .route("/cards/:id", put(modify_card))
+        .route("/cards/:id", put(modify_card).delete(delete_card))
         .layer(MapResponseLayer::new(|mut res: Response<BoxBody>| {
             res.headers_mut()
                 .typed_insert(CacheControl::new().with_private().with_no_cache());
@@ -463,7 +463,30 @@ async fn modify_card(
 
     transaction.commit().await?;
 
-    Ok(StatusCode::OK.into_response_boxed())
+    Ok(StatusCode::NO_CONTENT.into_response_boxed())
+}
+
+async fn delete_card(
+    id: Path<i64>,
+    session: Session,
+    mut transaction: ReqTransaction,
+) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
+    let res = sqlx::query("DELETE FROM cards WHERE id = $1 AND OWNER = $2")
+        .bind(&*id)
+        .bind(&user_id)
+        .execute(&mut *transaction)
+        .await
+        .context("couldn't delete card")?;
+
+    if res.rows_affected() == 0 {
+        return Err(EndpointError(StatusCode::NOT_FOUND.into_response_boxed()));
+    }
+
+    transaction.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response_boxed())
 }
 
 struct NonEmptyString(String);
