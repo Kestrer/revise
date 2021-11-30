@@ -2,15 +2,15 @@ CREATE EXTENSION pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
 	id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-	email TEXT UNIQUE NOT NULL,
-	password TEXT NOT NULL
+	email TEXT UNIQUE CHECK(octet_length(email) != 0) NOT NULL,
+	password TEXT CHECK(octet_length(password) != 0) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS cards (
 	id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
 	owner INT8 REFERENCES users ON DELETE CASCADE NOT NULL,
-	terms TEXT CHECK(terms SIMILAR TO E'\n*[^\n].*') NOT NULL,
-	definitions TEXT CHECK(definitions SIMILAR TO E'\n*[^\n].*') NOT NULL,
+	terms TEXT CHECK(terms ~ '\S') NOT NULL,
+	definitions TEXT CHECK(definitions ~ '\S') NOT NULL,
 	case_sensitive BOOLEAN NOT NULL,
 	knowledge INT2 CHECK(knowledge >= 0 AND knowledge <= 3) NOT NULL DEFAULT 0,
 	safety_net BOOLEAN NOT NULL DEFAULT FALSE
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE TABLE IF NOT EXISTS tags (
 	id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
 	owner INT8 REFERENCES users ON DELETE CASCADE NOT NULL,
-	text TEXT CHECK(text SIMILAR TO E'[^\n]+') NOT NULL,
+	text TEXT CHECK(text ~ '^[^\n]*$') NOT NULL,
 	description TEXT NOT NULL,
 	color BYTEA CHECK(octet_length(color) = 3) NOT NULL -- color of the tag in RGB
 );

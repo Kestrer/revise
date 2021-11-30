@@ -18,14 +18,21 @@ interface Card {
 
 function App(): JSX.Element {
 	const [cards] = createResource(async () => {
-		const response = await fetch("/cards");
-		return await response.json() as Card[];
+		try {
+			const response = await fetch("/cards");
+			if (response.status !== 200) {
+				throw new Error(`Status of ${response.status}: ${await response.text()}`);
+			}
+			return await response.json() as Card[];
+		} catch (e) {
+			console.error(e);
+			return null;
+		}
 	});
 
 	const [addingCard, setAddingCard] = createSignal(false);
 
 	return <>
-		1
 		{() => {
 			if (addingCard()) {
 				return <CardEditor
@@ -44,11 +51,12 @@ function App(): JSX.Element {
 									},
 								});
 								if (!res.ok) {
-									throw new Error();
+									throw new Error(`${res.status}`);
 								}
 								setAddingCard(false);
 							} catch (e) {
-								alert("something went wrong :(");
+								console.error(e);
+								alert(`could not create card: ${(e as Error).toString()}`);
 							}
 						})();
 					}}
@@ -62,35 +70,74 @@ function App(): JSX.Element {
 			const cards_ = cards();
 			if (cards_ === undefined) {
 				return <p>Loading...</p>;
+			} else if (cards_ === null) {
+				return <p>Failed to retrieve cards. Try reloading the page.</p>;
+			} else {
+				return <For each={cards_}>{card => <Card card={card} />}</For>;
 			}
-			return <For each={cards_}>{card => {
-				return <div class="card">
-					<p>{card.terms}</p>
-					<p>{card.definitions}</p>
-				</div>;
-			}}</For>;
 		}}
 	</>;
 }
 
+function Card(props: { card: Card }): JSX.Element {
+	const [editing, setEditing] = createSignal(false);
+
+	return createMemo(() => {
+		if (editing()) {
+			return <CardEditor
+				terms={props.card.terms}
+				definitions={props.card.definitions}
+				onSave={(terms, definitions) => {
+					void (async () => {
+						try {
+							const res = await fetch(`/cards/${props.card.id}`, {
+								method: "PUT",
+								body: JSON.stringify({ terms, definitions }),
+								headers: {
+									"content-type": "application/json",
+								},
+							});
+							if (!res.ok) {
+								throw new Error(`${res.status}`);
+							}
+							setEditing(false);
+						} catch (e) {
+							console.error(e);
+							alert(`could not save card: ${(e as Error).toString()}`);
+						}
+					})();
+				}}
+				onCancel={() => setEditing(false)}
+			/>
+		} else {
+			return <div class="card">
+				<p>{props.card.terms}</p>
+				<p>{props.card.definitions}</p>
+				<button type="button" onClick={() => setEditing(true)}>Edit</button>
+			</div>;
+		}
+	});
+}
+
 function CardEditor(props: {
+	terms?: string,
+	definitions?: string,
 	onSave: (terms: string, definitions: string) => void,
 	onCancel: () => void,
 }): JSX.Element {
+	const initTerms = props.terms ?? "";
+	const initDefinitions = props.definitions ?? "";
+
 	const terms = <textarea required onInput={() => {
 		terms.setCustomValidity(
-			/^\n+$/.test(terms.value)
-			? "at least one term must be provided"
-			: ""
+			/\S/.test(terms.value) ? "" : "at least one term must be provided"
 		);
-	}}></textarea> as HTMLTextAreaElement;
+	}}>{initTerms}</textarea> as HTMLTextAreaElement;
 	const definitions = <textarea required onInput={() => {
 		definitions.setCustomValidity(
-			/^\n+$/.test(definitions.value)
-			? "at least one definition must be provided"
-			: ""
+			/\S/.test(terms.value) ? "" : "at least one definition must be provided"
 		);
-	}}></textarea> as HTMLTextAreaElement;
+	}}>{initDefinitions}</textarea> as HTMLTextAreaElement;
 
 	const [disabled, setDisabled] = createSignal(false);
 

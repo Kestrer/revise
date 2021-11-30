@@ -1,12 +1,17 @@
 #![allow(clippy::single_component_path_imports)] // https://github.com/rust-lang/rust-clippy/issues/7923
 
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    net::SocketAddr,
+    ops::{Deref, DerefMut},
+    path::PathBuf,
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use axum::{
     async_trait,
     body::{self, BoxBody, Bytes, HttpBody},
-    extract::{Extension, Form, FromRequest, RequestParts},
+    extract::{Extension, Form, FromRequest, Path, RequestParts},
     handler::Handler as _,
     http::{
         header,
@@ -14,17 +19,21 @@ use axum::{
         HeaderMap, HeaderValue, Request, Response, StatusCode, Uri,
     },
     response::{IntoResponse, Redirect},
-    routing::handler_method_routing::{get, post},
+    routing::handler_method_routing::{get, post, put},
     AddExtensionLayer, Json, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
 use headers::{CacheControl, ContentType, HeaderMapExt as _};
 use rand::seq::SliceRandom;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Error as _},
+    Deserialize, Deserializer, Serialize,
+};
 use sqlx::{
     migrate,
     migrate::MigrateDatabase as _,
     postgres::{PgPool, Postgres},
+    Transaction,
 };
 use structopt::StructOpt;
 use tokio::{signal, task};
@@ -188,17 +197,17 @@ impl IntoResponse for EndpointError {
     }
 }
 
-type EndpointResult = Result<Response<BoxBody>, EndpointError>;
+type EndpointResult<T = Response<BoxBody>> = Result<T, EndpointError>;
 
 async fn redirect_https(https_port: u16, headers: HeaderMap, uri: Uri) -> EndpointResult {
     let host = headers
         .get("host")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Host header missing").into_response())?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "host header missing").into_response())?;
 
     let old_auth = Authority::try_from(host.as_bytes()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
-            format!("Host header invalid: {}", e),
+            format!("host header invalid: {}", e),
         )
             .into_response_boxed()
     })?;
@@ -221,6 +230,7 @@ fn router(db: PgPool) -> Router {
         .route("/create-account", post(create_account))
         .route("/delete-account", post(delete_account))
         .route("/cards", get(cards).post(create_card))
+        .route("/cards/:id", put(modify_card))
         .layer(MapResponseLayer::new(|mut res: Response<BoxBody>| {
             res.headers_mut()
                 .typed_insert(CacheControl::new().with_private().with_no_cache());
@@ -268,15 +278,13 @@ struct LogIn {
     password: String,
 }
 
-async fn login(db: Extension<PgPool>, form: Form<LogIn>) -> EndpointResult {
-    let mut transaction = db.begin().await.context("couldn't begin transaction")?;
-
+async fn login(form: Form<LogIn>, mut transaction: ReqTransaction) -> EndpointResult {
     let user_id: i64 = sqlx::query_scalar(
         "SELECT id FROM users WHERE email = $1 AND password = crypt($2, password)",
     )
     .bind(&form.email)
     .bind(&form.password)
-    .fetch_optional(&mut transaction)
+    .fetch_optional(&mut *transaction)
     .await
     .context("failed to check password correctness")?
     .ok_or_else(|| Redirect::to(Uri::from_static("/?loginError=")).into_response_boxed())?;
@@ -286,14 +294,11 @@ async fn login(db: Extension<PgPool>, form: Form<LogIn>) -> EndpointResult {
     sqlx::query("INSERT INTO session_cookies VALUES ($1, $2)")
         .bind(&session.0)
         .bind(&user_id)
-        .execute(&mut transaction)
+        .execute(&mut *transaction)
         .await
         .context("failed to insert new session cookie")?;
 
-    transaction
-        .commit()
-        .await
-        .context("failed to commit transaction")?;
+    transaction.commit().await?;
 
     Ok(session.set_cookie_on(Redirect::to(Uri::from_static("/"))))
 }
@@ -310,17 +315,14 @@ async fn logout(db: Extension<PgPool>, session: Session) -> EndpointResult {
 
 #[derive(Deserialize)]
 struct CreateAccount {
-    email: String,
-    password: String,
+    email: NonEmptyString,
+    password: NonEmptyString,
 }
 
-async fn create_account(db: Extension<PgPool>, form: Form<CreateAccount>) -> EndpointResult {
-    if form.email.is_empty() || form.password.is_empty() {
-        return Err(EndpointError(StatusCode::BAD_REQUEST.into_response_boxed()));
-    }
-
-    let mut transaction = db.begin().await.context("couldn't begin transaction")?;
-
+async fn create_account(
+    form: Form<CreateAccount>,
+    mut transaction: ReqTransaction,
+) -> EndpointResult {
     let user_id: i64 = sqlx::query_scalar(
         "\
             INSERT INTO users VALUES (DEFAULT, $1, crypt($2, gen_salt('bf', 8))) \
@@ -328,9 +330,9 @@ async fn create_account(db: Extension<PgPool>, form: Form<CreateAccount>) -> End
             RETURNING id\
         ",
     )
-    .bind(&form.email)
-    .bind(&form.password)
-    .fetch_optional(&mut transaction)
+    .bind(&form.email.0)
+    .bind(&form.password.0)
+    .fetch_optional(&mut *transaction)
     .await
     .context("failed to add new user")?
     .ok_or_else(|| Redirect::to(Uri::from_static("/?createAccountError=")).into_response_boxed())?;
@@ -340,29 +342,25 @@ async fn create_account(db: Extension<PgPool>, form: Form<CreateAccount>) -> End
     sqlx::query("INSERT INTO session_cookies VALUES ($1, $2)")
         .bind(&session.0)
         .bind(&user_id)
-        .execute(&mut transaction)
+        .execute(&mut *transaction)
         .await
         .context("failed to insert new session cookie")?;
 
-    transaction
-        .commit()
-        .await
-        .context("failed to commit transaction")?;
+    transaction.commit().await?;
 
     Ok(session.set_cookie_on(Redirect::to(Uri::from_static("/"))))
 }
 
-async fn delete_account(db: Extension<PgPool>, session: Session) -> EndpointResult {
-    sqlx::query(
-        "\
-            DELETE FROM users \
-            WHERE id = (SELECT for_user FROM session_cookies WHERE cookie_value = $1)\
-        ",
-    )
-    .bind(&session.0)
-    .execute(&*db)
-    .await
-    .context("failed to delete account")?;
+async fn delete_account(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(&user_id)
+        .execute(&mut *transaction)
+        .await
+        .context("failed to delete account")?;
+
+    transaction.commit().await?;
 
     Ok(session.clear_cookie_on(Redirect::to(Uri::from_static("/"))))
 }
@@ -377,15 +375,14 @@ struct Card {
     safety_net: bool,
 }
 
-async fn cards(db: Extension<PgPool>, session: Session) -> EndpointResult {
+async fn cards(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
     let cards: Vec<Card> = sqlx::query_as(
-        "\
-            SELECT id,terms,definitions,case_sensitive,knowledge,safety_net FROM cards \
-            WHERE owner = (SELECT for_user FROM session_cookies WHERE cookie_value = $1)\
-        ",
+        "SELECT id,terms,definitions,case_sensitive,knowledge,safety_net FROM cards WHERE owner = $1",
     )
-    .bind(&session.0)
-    .fetch_all(&*db)
+    .bind(&user_id)
+    .fetch_all(&mut *transaction)
     .await
     .context("failed to query cards")?;
 
@@ -394,35 +391,144 @@ async fn cards(db: Extension<PgPool>, session: Session) -> EndpointResult {
 
 #[derive(Deserialize)]
 struct CreateCard {
-    terms: String,
-    definitions: String,
+    terms: NonBlankString,
+    definitions: NonBlankString,
     case_sensitive: bool,
 }
 
 async fn create_card(
-    db: Extension<PgPool>,
     session: Session,
     body: Json<CreateCard>,
+    mut transaction: ReqTransaction,
 ) -> EndpointResult {
-    if body.terms.chars().all(|c| c == '\n') || body.definitions.chars().all(|c| c == '\n') {
-        return Err(EndpointError(StatusCode::BAD_REQUEST.into_response_boxed()));
-    }
+    let user_id = session.user_id(&mut *transaction).await?;
 
-    sqlx::query(
-        "\
-            INSERT INTO cards \
-            VALUES (DEFAULT, (SELECT for_user FROM session_cookies WHERE cookie_value = $1), $2, $3, $4)\
-        "
-    )
-    .bind(&session.0)
-    .bind(&body.terms)
-    .bind(&body.definitions)
-    .bind(&body.case_sensitive)
-    .execute(&*db)
-    .await
-    .context("failed to insert card")?;
+    sqlx::query("INSERT INTO cards VALUES (DEFAULT, $1, $2, $3, $4)")
+        .bind(&user_id)
+        .bind(&body.terms.0)
+        .bind(&body.definitions.0)
+        .bind(&body.case_sensitive)
+        .execute(&mut *transaction)
+        .await
+        .context("failed to insert card")?;
+
+    transaction.commit().await?;
 
     Ok(StatusCode::CREATED.into_response_boxed())
+}
+
+#[derive(Deserialize)]
+struct ModifyCard {
+    terms: Option<NonBlankString>,
+    definitions: Option<NonBlankString>,
+    case_sensitive: Option<bool>,
+}
+
+async fn modify_card(
+    id: Path<i64>,
+    session: Session,
+    body: Json<ModifyCard>,
+    mut transaction: ReqTransaction,
+) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
+    let res = sqlx::query(
+        "\
+            UPDATE cards \
+            SET \
+                terms = COALESCE($1, terms),\
+                definitions = COALESCE($2, definitions),\
+                case_sensitive = COALESCE($3, case_sensitive) \
+            WHERE \
+                id = $4 AND owner = $5\
+        ",
+    )
+    .bind(&body.terms.as_ref().map(|NonBlankString(terms)| terms))
+    .bind(
+        &body
+            .definitions
+            .as_ref()
+            .map(|NonBlankString(definitions)| definitions),
+    )
+    .bind(&body.case_sensitive)
+    .bind(&*id)
+    .bind(&user_id)
+    .execute(&mut *transaction)
+    .await
+    .context("couldn't modify card")?;
+
+    if res.rows_affected() == 0 {
+        return Err(EndpointError(StatusCode::NOT_FOUND.into_response_boxed()));
+    }
+
+    transaction.commit().await?;
+
+    Ok(StatusCode::OK.into_response_boxed())
+}
+
+struct NonEmptyString(String);
+impl<'de> Deserialize<'de> for NonEmptyString {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        if s.is_empty() {
+            return Err(D::Error::invalid_value(
+                de::Unexpected::Str(&s),
+                &"a non-empty string",
+            ));
+        }
+        Ok(Self(s))
+    }
+}
+
+struct NonBlankString(String);
+impl<'de> Deserialize<'de> for NonBlankString {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        if s.chars().all(|c| c.is_whitespace()) {
+            return Err(D::Error::custom("string is blank"));
+        }
+        Ok(Self(s))
+    }
+}
+
+struct ReqTransaction(Transaction<'static, Postgres>);
+
+#[async_trait]
+impl<B: Send + Sync> FromRequest<B> for ReqTransaction {
+    type Rejection = EndpointError;
+    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        let transaction = req
+            .extensions()
+            .context("extensions taken")?
+            .get::<PgPool>()
+            .context("no PgPool extension")?
+            .begin()
+            .await
+            .context("couldn't begin transaction")?;
+        Ok(Self(transaction))
+    }
+}
+
+impl ReqTransaction {
+    async fn commit(self) -> anyhow::Result<()> {
+        self.0
+            .commit()
+            .await
+            .context("failed to commit transaction")
+    }
+}
+
+impl Deref for ReqTransaction {
+    type Target = Transaction<'static, Postgres>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ReqTransaction {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 struct Session(String);
@@ -440,6 +546,22 @@ impl Session {
                     .collect(),
             )
             .unwrap(),
+        )
+    }
+
+    async fn user_id(
+        &self,
+        db: impl sqlx::Executor<'_, Database = Postgres>,
+    ) -> EndpointResult<i64> {
+        Ok(
+            sqlx::query_scalar("SELECT for_user FROM session_cookies WHERE cookie_value = $1")
+                .bind(&self.0)
+                .fetch_optional(db)
+                .await
+                .context("failed to get user session")?
+                .ok_or_else(|| {
+                    (StatusCode::UNAUTHORIZED, "session token invalid").into_response_boxed()
+                })?,
         )
     }
 
@@ -480,12 +602,11 @@ impl<B: Send> FromRequest<B> for Session {
 }
 
 struct SessionRejection;
-
 impl IntoResponse for SessionRejection {
     type Body = BoxBody;
     type BodyError = <BoxBody as HttpBody>::Error;
     fn into_response(self) -> Response<Self::Body> {
-        (StatusCode::UNAUTHORIZED, "You are not logged in.").into_response_boxed()
+        (StatusCode::UNAUTHORIZED, "you are not logged in").into_response_boxed()
     }
 }
 
