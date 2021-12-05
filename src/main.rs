@@ -291,8 +291,8 @@ async fn login(form: Form<LogIn>, mut transaction: ReqTransaction) -> EndpointRe
     let session = Session::new();
 
     sqlx::query("INSERT INTO session_cookies VALUES ($1, $2)")
-        .bind(&session.0)
-        .bind(&user_id)
+        .bind(&session)
+        .bind(user_id)
         .execute(&mut *transaction)
         .await
         .context("failed to insert new session cookie")?;
@@ -304,7 +304,7 @@ async fn login(form: Form<LogIn>, mut transaction: ReqTransaction) -> EndpointRe
 
 async fn logout(db: Extension<PgPool>, session: Session) -> EndpointResult {
     sqlx::query("DELETE FROM session_cookies WHERE cookie_value = $1")
-        .bind(&session.0)
+        .bind(&session)
         .execute(&*db)
         .await
         .context("failed to log out")?;
@@ -329,8 +329,8 @@ async fn create_account(
             RETURNING id\
         ",
     )
-    .bind(&form.email.0)
-    .bind(&form.password.0)
+    .bind(&form.email)
+    .bind(&form.password)
     .fetch_optional(&mut *transaction)
     .await
     .context("failed to add new user")?
@@ -339,7 +339,7 @@ async fn create_account(
     let session = Session::new();
 
     sqlx::query("INSERT INTO session_cookies VALUES ($1, $2)")
-        .bind(&session.0)
+        .bind(&session)
         .bind(&user_id)
         .execute(&mut *transaction)
         .await
@@ -354,7 +354,7 @@ async fn delete_account(session: Session, mut transaction: ReqTransaction) -> En
     let user_id = session.user_id(&mut *transaction).await?;
 
     sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(&user_id)
+        .bind(user_id)
         .execute(&mut *transaction)
         .await
         .context("failed to delete account")?;
@@ -373,7 +373,7 @@ async fn me(session: Session, mut transaction: ReqTransaction) -> EndpointResult
     let user_id = session.user_id(&mut *transaction).await?;
 
     let me: Me = sqlx::query_as("SELECT email FROM users WHERE id = $1")
-        .bind(&user_id)
+        .bind(user_id)
         .fetch_one(&mut *transaction)
         .await
         .context("failed to query users")?;
@@ -394,7 +394,7 @@ async fn modify_me(
     let user_id = session.user_id(&mut *transaction).await?;
 
     let res = sqlx::query("UPDATE users SET email = COALESCE($1, email) WHERE id = $2")
-        .bind(&body.email.as_ref().map(|NonEmptyString(email)| email))
+        .bind(&body.email)
         .bind(user_id)
         .execute(&mut *transaction)
         .await
@@ -427,7 +427,7 @@ async fn cards(session: Session, mut transaction: ReqTransaction) -> EndpointRes
     let cards: Vec<Card> = sqlx::query_as(
         "SELECT id,terms,definitions,case_sensitive,knowledge,safety_net FROM cards WHERE owner = $1",
     )
-    .bind(&user_id)
+    .bind(user_id)
     .fetch_all(&mut *transaction)
     .await
     .context("failed to query cards")?;
@@ -450,9 +450,9 @@ async fn create_card(
     let user_id = session.user_id(&mut *transaction).await?;
 
     sqlx::query("INSERT INTO cards VALUES (DEFAULT, $1, $2, $3, $4)")
-        .bind(&user_id)
-        .bind(&body.terms.0)
-        .bind(&body.definitions.0)
+        .bind(user_id)
+        .bind(&body.terms)
+        .bind(&body.definitions)
         .bind(&body.case_sensitive)
         .execute(&mut *transaction)
         .await
@@ -489,16 +489,11 @@ async fn modify_card(
                 id = $4 AND owner = $5\
         ",
     )
-    .bind(&body.terms.as_ref().map(|NonBlankString(terms)| terms))
-    .bind(
-        &body
-            .definitions
-            .as_ref()
-            .map(|NonBlankString(definitions)| definitions),
-    )
+    .bind(&body.terms)
+    .bind(&body.definitions)
     .bind(&body.case_sensitive)
-    .bind(&*id)
-    .bind(&user_id)
+    .bind(*id)
+    .bind(user_id)
     .execute(&mut *transaction)
     .await
     .context("couldn't modify card")?;
@@ -520,8 +515,8 @@ async fn delete_card(
     let user_id = session.user_id(&mut *transaction).await?;
 
     let res = sqlx::query("DELETE FROM cards WHERE id = $1 AND OWNER = $2")
-        .bind(&*id)
-        .bind(&user_id)
+        .bind(*id)
+        .bind(user_id)
         .execute(&mut *transaction)
         .await
         .context("couldn't delete card")?;
@@ -535,6 +530,7 @@ async fn delete_card(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+#[derive(sqlx::Type)]
 struct NonEmptyString(String);
 impl<'de> Deserialize<'de> for NonEmptyString {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -549,6 +545,7 @@ impl<'de> Deserialize<'de> for NonEmptyString {
     }
 }
 
+#[derive(sqlx::Type)]
 struct NonBlankString(String);
 impl<'de> Deserialize<'de> for NonBlankString {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -600,6 +597,7 @@ impl DerefMut for ReqTransaction {
     }
 }
 
+#[derive(sqlx::Type)]
 struct Session(String);
 
 impl Session {
@@ -624,7 +622,7 @@ impl Session {
     ) -> EndpointResult<i64> {
         Ok(
             sqlx::query_scalar("SELECT for_user FROM session_cookies WHERE cookie_value = $1")
-                .bind(&self.0)
+                .bind(self)
                 .fetch_optional(db)
                 .await
                 .context("failed to get user session")?
