@@ -227,6 +227,7 @@ fn router(db: PgPool) -> Router {
         .route("/logout", post(logout))
         .route("/create-account", post(create_account))
         .route("/delete-account", post(delete_account))
+        .route("/me", get(me).put(modify_me))
         .route("/cards", get(cards).post(create_card))
         .route("/cards/:id", put(modify_card).delete(delete_card))
         .layer(MapResponseLayer::new(|mut res: Response<BoxBody>| {
@@ -361,6 +362,53 @@ async fn delete_account(session: Session, mut transaction: ReqTransaction) -> En
     transaction.commit().await?;
 
     Ok(session.clear_cookie_on(Redirect::to(Uri::from_static("/"))))
+}
+
+#[derive(sqlx::FromRow, Serialize)]
+struct Me {
+    email: String,
+}
+
+async fn me(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
+    let me: Me = sqlx::query_as("SELECT email FROM users WHERE id = $1")
+        .bind(&user_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .context("failed to query users")?;
+
+    Ok(Json(me).into_response())
+}
+
+#[derive(Deserialize)]
+struct ModifyMe {
+    email: Option<NonEmptyString>,
+}
+
+async fn modify_me(
+    session: Session,
+    body: Json<ModifyMe>,
+    mut transaction: ReqTransaction,
+) -> EndpointResult {
+    let user_id = session.user_id(&mut *transaction).await?;
+
+    let res = sqlx::query("UPDATE users SET email = COALESCE($1, email) WHERE id = $2")
+        .bind(&body.email.as_ref().map(|NonEmptyString(email)| email))
+        .bind(user_id)
+        .execute(&mut *transaction)
+        .await
+        .context("couldn't modify user")?;
+
+    if res.rows_affected() == 0 {
+        return Err(EndpointError(
+            (StatusCode::NOT_FOUND, "account deleted").into_response(),
+        ));
+    }
+
+    transaction.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 #[derive(sqlx::FromRow, Serialize)]

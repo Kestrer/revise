@@ -33,6 +33,7 @@ function App(): JSX.Element {
 	const [addingCard, setAddingCard] = createSignal(false);
 
 	return <>
+		<h1>dashboard</h1>
 		{() => {
 			if (addingCard()) {
 				return <CardEditor
@@ -76,6 +77,7 @@ function App(): JSX.Element {
 				return <For each={cards_}>{card => <Card card={card} />}</For>;
 			}
 		}}
+		<UserAccount />
 	</>;
 }
 
@@ -176,6 +178,73 @@ function CardEditor(props: {
 			<button type="button" disabled={disabled()} onClick={() => props.onCancel()}>Cancel</button>
 		</form>
 	</div>;
+}
+
+interface Me {
+	email: string,
+}
+
+function UserAccount(): JSX.Element {
+	const [me] = createResource(async () => {
+		try {
+			const response = await fetch("/me");
+			if (response.status !== 200) {
+				throw new Error(`Status of ${response.status}: ${await response.text()}`);
+			}
+			return await response.json() as Me;
+		} catch (e) {
+			console.error(e);
+			return null;
+		}
+	});
+
+	return <>
+		<h2>User Account</h2>
+		<form action="/logout" method="post"><button>Log Out</button></form>
+		{() => {
+			const me_ = me();
+			if (me_ === undefined) {
+				return;
+			} else if (me_ === null) {
+				return <p>Failed to retrieve user data. Try reloading the page.</p>;
+			} else {
+				const [newEmail, setNewEmail] = createSignal(me_.email);
+				const [saving, setSaving] = createSignal(false);
+
+				return <form action="javascript:void(0)" onSubmit={() => {
+					setSaving(true);
+					void (async () => {
+						try {
+							const res = await fetch("/me", {
+								method: "PUT",
+								body: JSON.stringify({ email: newEmail() }),
+								headers: {
+									"content-type": "application/json",
+								},
+							});
+							if (!res.ok) {
+								throw new Error(`${res.status}`);
+							}
+						} catch (e) {
+							console.log(e);
+							alert(`could not change email: ${(e as Error).toString()}`)
+						} finally {
+							setSaving(false);
+						}
+					})();
+				}}>
+					<label>Email: <input
+						type="email"
+						required
+						value={newEmail()}
+						onInput={e => setNewEmail((e.target as HTMLInputElement).value)}
+					/></label>
+					<button disabled={saving() || newEmail() === me_.email}>Save</button>
+				</form>;
+			}
+		}}
+		<form action="/delete-account" method="post"><button>Delete Account</button></form>
+	</>;
 }
 
 render(App, document.getElementById("app")!);
