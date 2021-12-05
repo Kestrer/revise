@@ -36,7 +36,7 @@ impl Asset {
             headers
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|header| header.to_str().ok())
-                .map_or(false, |header| header.contains("br"))
+                .map_or(false, supports_brotli)
         });
         let mut res = brotli.unwrap_or(self.uncompressed).into_response_boxed();
         if brotli.is_some() {
@@ -95,4 +95,10 @@ pub(crate) fn immutable_assets() -> Router {
         );
     }
     router
+}
+
+fn supports_brotli(header: &str) -> bool {
+    header
+        .split(",")
+        .any(|s| s.trim().splitn(2, ";q=").next().unwrap() == "br")
 }
