@@ -2,21 +2,14 @@
 //! debug mode.
 
 use anyhow::Context as _;
-use axum::{
-    body::{self, Body},
-    error_handling::HandleErrorExt as _,
-    http::Request,
-    routing::service_method_routing::get as get_service,
-    Router,
-};
+use axum::{http::Request, response::IntoResponse, routing::get_service, Router};
 use tokio::{
     fs,
     process::{Child, Command},
 };
-use tower::ServiceExt as _;
 use tower_http::services::ServeDir;
 
-use crate::{EndpointError, EndpointResult, IntoResponseBoxed as _};
+use crate::{EndpointError, EndpointResult};
 
 pub(crate) struct AssetManager(Child);
 
@@ -47,7 +40,7 @@ impl MutableAsset {
         Ok(fs::read_to_string(self.0)
             .await
             .with_context(|| format!("failed to read mutable asset {}", self.0))?
-            .into_response_boxed())
+            .into_response())
     }
 }
 
@@ -59,11 +52,10 @@ macro_rules! mutable_asset {
 pub(crate) use mutable_asset;
 
 pub(crate) fn immutable_assets() -> Router {
-    let service = ServeDir::new("html/dist/assets")
-        .map_request::<_, Request<Body>>(std::convert::identity)
-        .map_response(|res| res.map(body::boxed))
-        .handle_error(|e| {
+    Router::new().route(
+        "/*_",
+        get_service(ServeDir::new("html/dist/assets")).handle_error(|e| async {
             EndpointError::from(anyhow::Error::new(e).context("failed to serve immutable asset"))
-        });
-    Router::new().route("/*_", get_service(service))
+        }),
+    )
 }

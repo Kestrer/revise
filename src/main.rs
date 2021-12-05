@@ -19,7 +19,7 @@ use axum::{
         HeaderMap, HeaderValue, Request, Response, StatusCode, Uri,
     },
     response::{IntoResponse, Redirect},
-    routing::handler_method_routing::{get, post, put},
+    routing::{get, post, put},
     AddExtensionLayer, Json, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
@@ -190,9 +190,7 @@ impl From<anyhow::Error> for EndpointError {
 }
 
 impl IntoResponse for EndpointError {
-    type Body = BoxBody;
-    type BodyError = <Self::Body as HttpBody>::Error;
-    fn into_response(self) -> Response<Self::Body> {
+    fn into_response(self) -> Response<BoxBody> {
         self.0
     }
 }
@@ -209,7 +207,7 @@ async fn redirect_https(https_port: u16, headers: HeaderMap, uri: Uri) -> Endpoi
             StatusCode::BAD_REQUEST,
             format!("host header invalid: {}", e),
         )
-            .into_response_boxed()
+            .into_response()
     })?;
 
     let new_auth = Authority::try_from(&*format!("{}:{}", old_auth.host(), https_port)).unwrap();
@@ -219,7 +217,7 @@ async fn redirect_https(https_port: u16, headers: HeaderMap, uri: Uri) -> Endpoi
     uri_parts.authority = Some(new_auth);
     let uri = Uri::try_from(uri_parts).context("failed to reconstruct HTTPS URI")?;
 
-    Ok(Redirect::permanent(uri).into_response_boxed())
+    Ok(Redirect::permanent(uri).into_response())
 }
 
 fn router(db: PgPool) -> Router {
@@ -287,7 +285,7 @@ async fn login(form: Form<LogIn>, mut transaction: ReqTransaction) -> EndpointRe
     .fetch_optional(&mut *transaction)
     .await
     .context("failed to check password correctness")?
-    .ok_or_else(|| Redirect::to(Uri::from_static("/?loginError=")).into_response_boxed())?;
+    .ok_or_else(|| Redirect::to(Uri::from_static("/?loginError=")).into_response())?;
 
     let session = Session::new();
 
@@ -335,7 +333,7 @@ async fn create_account(
     .fetch_optional(&mut *transaction)
     .await
     .context("failed to add new user")?
-    .ok_or_else(|| Redirect::to(Uri::from_static("/?createAccountError=")).into_response_boxed())?;
+    .ok_or_else(|| Redirect::to(Uri::from_static("/?createAccountError=")).into_response())?;
 
     let session = Session::new();
 
@@ -386,7 +384,7 @@ async fn cards(session: Session, mut transaction: ReqTransaction) -> EndpointRes
     .await
     .context("failed to query cards")?;
 
-    Ok(Json(cards).into_response_boxed())
+    Ok(Json(cards).into_response())
 }
 
 #[derive(Deserialize)]
@@ -414,7 +412,7 @@ async fn create_card(
 
     transaction.commit().await?;
 
-    Ok(StatusCode::CREATED.into_response_boxed())
+    Ok(StatusCode::CREATED.into_response())
 }
 
 #[derive(Deserialize)]
@@ -458,12 +456,12 @@ async fn modify_card(
     .context("couldn't modify card")?;
 
     if res.rows_affected() == 0 {
-        return Err(EndpointError(StatusCode::NOT_FOUND.into_response_boxed()));
+        return Err(EndpointError(StatusCode::NOT_FOUND.into_response()));
     }
 
     transaction.commit().await?;
 
-    Ok(StatusCode::NO_CONTENT.into_response_boxed())
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn delete_card(
@@ -481,12 +479,12 @@ async fn delete_card(
         .context("couldn't delete card")?;
 
     if res.rows_affected() == 0 {
-        return Err(EndpointError(StatusCode::NOT_FOUND.into_response_boxed()));
+        return Err(EndpointError(StatusCode::NOT_FOUND.into_response()));
     }
 
     transaction.commit().await?;
 
-    Ok(StatusCode::NO_CONTENT.into_response_boxed())
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 struct NonEmptyString(String);
@@ -583,13 +581,13 @@ impl Session {
                 .await
                 .context("failed to get user session")?
                 .ok_or_else(|| {
-                    (StatusCode::UNAUTHORIZED, "session token invalid").into_response_boxed()
+                    (StatusCode::UNAUTHORIZED, "session token invalid").into_response()
                 })?,
         )
     }
 
     fn set_cookie_on(&self, response: impl IntoResponse) -> Response<BoxBody> {
-        let mut response = response.into_response_boxed();
+        let mut response = response.into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,
             HeaderValue::from_str(&format!(
@@ -603,7 +601,7 @@ impl Session {
     }
 
     fn clear_cookie_on(&self, response: impl IntoResponse) -> Response<BoxBody> {
-        let mut response = response.into_response_boxed();
+        let mut response = response.into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,
             HeaderValue::from_static("session=;Max-Age=0"),
@@ -626,18 +624,7 @@ impl<B: Send> FromRequest<B> for Session {
 
 struct SessionRejection;
 impl IntoResponse for SessionRejection {
-    type Body = BoxBody;
-    type BodyError = <BoxBody as HttpBody>::Error;
-    fn into_response(self) -> Response<Self::Body> {
-        (StatusCode::UNAUTHORIZED, "you are not logged in").into_response_boxed()
-    }
-}
-
-trait IntoResponseBoxed {
-    fn into_response_boxed(self) -> Response<BoxBody>;
-}
-impl<T: IntoResponse> IntoResponseBoxed for T {
-    fn into_response_boxed(self) -> Response<BoxBody> {
-        self.into_response().map(body::boxed)
+    fn into_response(self) -> Response<BoxBody> {
+        (StatusCode::UNAUTHORIZED, "you are not logged in").into_response()
     }
 }

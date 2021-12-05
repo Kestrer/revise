@@ -7,12 +7,13 @@ use axum::{
         header::{self, HeaderMap, HeaderValue},
         Request, Response, StatusCode,
     },
-    routing::handler_method_routing::get,
+    response::IntoResponse,
+    routing::get,
     Router,
 };
 use headers::{ETag, HeaderMapExt as _, IfNoneMatch};
 
-use crate::{EndpointResult, IntoResponseBoxed as _};
+use crate::EndpointResult;
 
 // In development mode, this would start a subprocess running `npm run watch` - in release mode, it
 // is a no-op.
@@ -38,7 +39,7 @@ impl Asset {
                 .and_then(|header| header.to_str().ok())
                 .map_or(false, supports_brotli)
         });
-        let mut res = brotli.unwrap_or(self.uncompressed).into_response_boxed();
+        let mut res = brotli.unwrap_or(self.uncompressed).into_response();
         if brotli.is_some() {
             res.headers_mut()
                 .insert("content-encoding", HeaderValue::from_static("br"));
@@ -60,7 +61,7 @@ impl MutableAsset {
             .typed_get::<IfNoneMatch>()
             .map_or(false, |h| !h.precondition_passes(&etag))
         {
-            StatusCode::NOT_MODIFIED.into_response_boxed()
+            StatusCode::NOT_MODIFIED.into_response()
         } else {
             self.asset.response(req.headers())
         };
@@ -99,6 +100,6 @@ pub(crate) fn immutable_assets() -> Router {
 
 fn supports_brotli(header: &str) -> bool {
     header
-        .split(",")
+        .split(',')
         .any(|s| s.trim().splitn(2, ";q=").next().unwrap() == "br")
 }
