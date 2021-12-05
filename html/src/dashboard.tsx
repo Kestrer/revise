@@ -8,12 +8,13 @@ import { render } from "solid-js/web";
 import "./dashboard.scss";
 
 interface Card {
-    id: number,
-    terms: string,
-    definitions: string,
-    case_sensitive: boolean,
-    knowledge: number,
-    safety_net: boolean,
+	id: number,
+	createdAt: number,
+	terms: string,
+	definitions: string,
+	caseSensitive: boolean,
+	knowledge: number,
+	safetyNet: boolean,
 }
 
 function App(): JSX.Element {
@@ -45,7 +46,8 @@ function App(): JSX.Element {
 									body: JSON.stringify({
 										terms,
 										definitions,
-										case_sensitive: false,
+										caseSensitive: false,
+										createdAt: Date.now(),
 									}),
 									headers: {
 										"content-type": "application/json",
@@ -138,6 +140,7 @@ function Card(props: { card: Card }): JSX.Element {
 				<p>{props.card.definitions}</p>
 				<button type="button" onClick={() => setEditing(true)}>Edit</button>
 				<button type="button" disabled={deleting()} onClick={() => setDeleting(true)}>Delete</button>
+				<p>Created at {new Date(props.card.createdAt).toLocaleString()}</p>
 			</div>;
 		}
 	});

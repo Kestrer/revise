@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS cards (
 	id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
 	owner INT8 REFERENCES users ON DELETE CASCADE NOT NULL,
+	created_at INT8 NOT NULL, -- Javascript timestamp
 	terms TEXT CHECK(terms ~ '\S') NOT NULL,
 	definitions TEXT CHECK(definitions ~ '\S') NOT NULL,
 	case_sensitive BOOLEAN NOT NULL,

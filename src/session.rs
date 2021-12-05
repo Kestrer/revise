@@ -35,10 +35,7 @@ impl Session {
         )
     }
 
-    pub(crate) async fn user_id(
-        &self,
-        db: impl sqlx::PgExecutor<'_>,
-    ) -> EndpointResult<i64> {
+    pub(crate) async fn user_id(&self, db: impl sqlx::PgExecutor<'_>) -> EndpointResult<i64> {
         Ok(
             sqlx::query_scalar("SELECT for_user FROM session_cookies WHERE cookie_value = $1")
                 .bind(self)

@@ -13,8 +13,10 @@ pub(crate) fn routes() -> Router {
 }
 
 #[derive(sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Card {
     id: i64,
+    created_at: i64,
     terms: String,
     definitions: String,
     case_sensitive: bool,
@@ -26,7 +28,12 @@ async fn get(session: Session, mut transaction: ReqTransaction) -> EndpointResul
     let user_id = session.user_id(&mut *transaction).await?;
 
     let cards: Vec<Card> = sqlx::query_as(
-        "SELECT id,terms,definitions,case_sensitive,knowledge,safety_net FROM cards WHERE owner = $1",
+        "\
+            SELECT id,created_at,terms,definitions,case_sensitive,knowledge,safety_net \
+            FROM cards \
+            WHERE owner = $1 \
+            ORDER BY created_at DESC\
+        ",
     )
     .bind(user_id)
     .fetch_all(&mut *transaction)
@@ -37,7 +44,9 @@ async fn get(session: Session, mut transaction: ReqTransaction) -> EndpointResul
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateCard {
+    created_at: i64,
     terms: NonBlankString,
     definitions: NonBlankString,
     case_sensitive: bool,
@@ -50,8 +59,9 @@ async fn create(
 ) -> EndpointResult {
     let user_id = session.user_id(&mut *transaction).await?;
 
-    sqlx::query("INSERT INTO cards VALUES (DEFAULT, $1, $2, $3, $4)")
+    sqlx::query("INSERT INTO cards VALUES (DEFAULT, $1, $2, $3, $4, $5)")
         .bind(user_id)
+        .bind(&body.created_at)
         .bind(&body.terms)
         .bind(&body.definitions)
         .bind(&body.case_sensitive)
@@ -65,6 +75,7 @@ async fn create(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ModifyCard {
     terms: Option<NonBlankString>,
     definitions: Option<NonBlankString>,

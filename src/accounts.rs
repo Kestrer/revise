@@ -112,6 +112,7 @@ async fn delete(session: Session, mut transaction: ReqTransaction) -> EndpointRe
 }
 
 #[derive(sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Me {
     email: String,
 }
@@ -129,6 +130,7 @@ async fn me(session: Session, mut transaction: ReqTransaction) -> EndpointResult
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ModifyMe {
     email: Option<NonEmptyString>,
 }
