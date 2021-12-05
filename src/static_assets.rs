@@ -8,12 +8,11 @@ use axum::{
         Request, Response, StatusCode,
     },
     response::IntoResponse,
-    routing::get,
-    Router,
+    routing, Router,
 };
 use headers::{ETag, HeaderMapExt as _, IfNoneMatch};
 
-use crate::EndpointResult;
+use crate::utils::EndpointResult;
 
 // In development mode, this would start a subprocess running `npm run watch` - in release mode, it
 // is a no-op.
@@ -88,7 +87,7 @@ pub(crate) fn immutable_assets() -> Router {
     for asset in include!(concat!(env!("OUT_DIR"), "/immutable-assets")) {
         router = router.route(
             asset.path,
-            get(move |headers: HeaderMap| async move {
+            routing::get(move |headers: HeaderMap| async move {
                 let mut res = asset.asset.response(&headers);
                 res.headers_mut().insert("content-type", asset.content_type);
                 res

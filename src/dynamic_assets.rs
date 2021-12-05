@@ -9,7 +9,7 @@ use tokio::{
 };
 use tower_http::services::ServeDir;
 
-use crate::{EndpointError, EndpointResult};
+use crate::utils::{EndpointError, EndpointResult};
 
 pub(crate) struct AssetManager(Child);
 

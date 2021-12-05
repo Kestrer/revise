@@ -187,7 +187,7 @@ interface Me {
 function UserAccount(): JSX.Element {
 	const [me] = createResource(async () => {
 		try {
-			const response = await fetch("/me");
+			const response = await fetch("/accounts/me");
 			if (response.status !== 200) {
 				throw new Error(`Status of ${response.status}: ${await response.text()}`);
 			}
@@ -200,7 +200,7 @@ function UserAccount(): JSX.Element {
 
 	return <>
 		<h2>User Account</h2>
-		<form action="/logout" method="post"><button>Log Out</button></form>
+		<form action="/accounts/logout" method="post"><button>Log Out</button></form>
 		{() => {
 			const me_ = me();
 			if (me_ === undefined) {
@@ -215,7 +215,7 @@ function UserAccount(): JSX.Element {
 					setSaving(true);
 					void (async () => {
 						try {
-							const res = await fetch("/me", {
+							const res = await fetch("/accounts/me", {
 								method: "PUT",
 								body: JSON.stringify({ email: newEmail() }),
 								headers: {
@@ -243,7 +243,7 @@ function UserAccount(): JSX.Element {
 				</form>;
 			}
 		}}
-		<form action="/delete-account" method="post"><button>Delete Account</button></form>
+		<form action="/accounts/delete" method="post"><button>Delete Account</button></form>
 	</>;
 }
 

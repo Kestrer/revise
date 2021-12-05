@@ -6,7 +6,7 @@
 		<title>revise</title>
 	</head>
 	<body>
-		<form action="/login" method="post">
+		<form action="/accounts/login" method="post">
 			<h2>Log In</h2>
 			<p style="color:red" id="loginError"></p>
 			<p><label>Email: <input name="email" type="email" required></label></p>
@@ -14,7 +14,7 @@
 			<button>Log in</button>
 		</form>
 
-		<form id="createAccountForm" action="/create-account" method="post">
+		<form id="createAccountForm" action="/accounts/create" method="post">
 			<h2>Create Account</h2>
 			<p style="color:red" id="createAccountError"></p>
 			<p><label>Email: <input name="email" type="email" required></label></p>
