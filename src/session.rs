@@ -11,7 +11,6 @@ use axum::{
 };
 use headers::HeaderMapExt as _;
 use rand::seq::SliceRandom as _;
-use sqlx::Postgres;
 
 use crate::utils::EndpointResult;
 
@@ -38,7 +37,7 @@ impl Session {
 
     pub(crate) async fn user_id(
         &self,
-        db: impl sqlx::Executor<'_, Database = Postgres>,
+        db: impl sqlx::PgExecutor<'_>,
     ) -> EndpointResult<i64> {
         Ok(
             sqlx::query_scalar("SELECT for_user FROM session_cookies WHERE cookie_value = $1")
