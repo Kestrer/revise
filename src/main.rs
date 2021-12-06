@@ -4,13 +4,12 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use axum::{
-    body::BoxBody,
     handler::Handler as _,
     http::{
         uri::{Authority, Scheme},
-        HeaderMap, Request, Response, StatusCode, Uri,
+        HeaderMap, Request, StatusCode, Uri,
     },
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
     AddExtensionLayer, Router,
 };
@@ -185,7 +184,7 @@ fn router(db: PgPool) -> Router {
         .route("/", get(index))
         .nest("/accounts", accounts::routes())
         .nest("/cards", cards::routes())
-        .layer(MapResponseLayer::new(|mut res: Response<BoxBody>| {
+        .layer(MapResponseLayer::new(|mut res: Response| {
             res.headers_mut()
                 .typed_insert(CacheControl::new().with_private().with_no_cache());
             res

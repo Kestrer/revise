@@ -3,10 +3,10 @@ use std::ops::{Deref, DerefMut};
 use anyhow::Context as _;
 use axum::{
     async_trait,
-    body::{self, BoxBody, Bytes, HttpBody},
+    body::{self, Bytes, HttpBody},
     extract::{FromRequest, RequestParts},
-    http::{Response, StatusCode},
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde::{
     de::{self, Error as _},
@@ -14,7 +14,7 @@ use serde::{
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
-pub(crate) struct EndpointError(Response<BoxBody>);
+pub(crate) struct EndpointError(Response);
 
 impl EndpointError {
     pub(crate) fn new<R: IntoResponse>(response: R) -> Self {
@@ -46,12 +46,12 @@ impl From<anyhow::Error> for EndpointError {
 }
 
 impl IntoResponse for EndpointError {
-    fn into_response(self) -> Response<BoxBody> {
+    fn into_response(self) -> Response {
         self.0
     }
 }
 
-pub(crate) type EndpointResult<T = Response<BoxBody>> = Result<T, EndpointError>;
+pub(crate) type EndpointResult<T = Response> = Result<T, EndpointError>;
 
 #[derive(sqlx::Type)]
 #[sqlx(transparent)]

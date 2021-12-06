@@ -1,13 +1,12 @@
 use anyhow::Context as _;
 use axum::{
     async_trait,
-    body::BoxBody,
     extract::{FromRequest, RequestParts},
     http::{
         header::{self, HeaderValue},
-        Response, StatusCode,
+        StatusCode,
     },
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt as _;
 use rand::seq::SliceRandom as _;
@@ -48,7 +47,7 @@ impl Session {
         )
     }
 
-    pub(crate) fn set_cookie_on(&self, response: impl IntoResponse) -> Response<BoxBody> {
+    pub(crate) fn set_cookie_on(&self, response: impl IntoResponse) -> Response {
         let mut response = response.into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,
@@ -62,7 +61,7 @@ impl Session {
         response
     }
 
-    pub(crate) fn clear_cookie_on(&self, response: impl IntoResponse) -> Response<BoxBody> {
+    pub(crate) fn clear_cookie_on(&self, response: impl IntoResponse) -> Response {
         let mut response = response.into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,
@@ -86,7 +85,7 @@ impl<B: Send> FromRequest<B> for Session {
 
 pub(crate) struct SessionRejection;
 impl IntoResponse for SessionRejection {
-    fn into_response(self) -> Response<BoxBody> {
+    fn into_response(self) -> Response {
         (StatusCode::UNAUTHORIZED, "you are not logged in").into_response()
     }
 }

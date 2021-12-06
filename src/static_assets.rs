@@ -2,12 +2,11 @@
 //! mode.
 
 use axum::{
-    body::BoxBody,
     http::{
         header::{self, HeaderMap, HeaderValue},
-        Request, Response, StatusCode,
+        Request, StatusCode,
     },
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing, Router,
 };
 use headers::{ETag, HeaderMapExt as _, IfNoneMatch};
@@ -31,7 +30,7 @@ pub(crate) struct Asset {
 }
 
 impl Asset {
-    fn response(&self, headers: &HeaderMap) -> Response<BoxBody> {
+    fn response(&self, headers: &HeaderMap) -> Response {
         let brotli = self.brotli.filter(|_| {
             headers
                 .get(header::ACCEPT_ENCODING)
