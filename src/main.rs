@@ -10,8 +10,7 @@ use axum::{
         HeaderMap, Request, StatusCode, Uri,
     },
     response::{IntoResponse, Redirect, Response},
-    routing::get,
-    AddExtensionLayer, Router,
+    routing, AddExtensionLayer, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
 use headers::{CacheControl, ContentType, HeaderMapExt as _};
@@ -33,6 +32,7 @@ mod assets;
 mod accounts;
 mod cards;
 mod session;
+mod user_events;
 mod utils;
 
 #[derive(StructOpt)]
@@ -47,19 +47,19 @@ struct Opts {
     database: String,
 
     /// The TLS certificate file to use, in PEM format.
-    #[structopt(long)]
+    #[structopt(long, env = "TLS_CERT")]
     tls_cert: PathBuf,
 
     /// The TLS key file to use, in PEM format.
-    #[structopt(long)]
+    #[structopt(long, env = "TLS_KEY")]
     tls_key: PathBuf,
 
     /// The port to run the HTTP web server on.
-    #[structopt(long)]
+    #[structopt(long, env = "HTTP_PORT")]
     http_port: u16,
 
     /// The port to run the HTTPS web server on.
-    #[structopt(long)]
+    #[structopt(long, env = "HTTPS_PORT")]
     https_port: u16,
 }
 
@@ -98,7 +98,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to open database")?;
 
-    migrate!()
+    #[cfg(debug_assertions)]
+    let migrator = migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
+    #[cfg(not(debug_assertions))]
+    let migrator = migrate!();
+
+    migrator
         .run(&db)
         .await
         .context("database migration failed")?;
@@ -126,8 +131,10 @@ async fn main() -> anyhow::Result<()> {
             .await
     });
 
+    let router = router(db).await?;
+
     let https_task =
-        task::spawn(async move { https_server.serve(router(db).into_make_service()).await });
+        task::spawn(async move { https_server.serve(router.into_make_service()).await });
 
     let listening_http = http_handle.listening().await;
     log::info!("HTTP server listening on {}", listening_http);
@@ -179,9 +186,10 @@ async fn redirect_https(https_port: u16, headers: HeaderMap, uri: Uri) -> Endpoi
     Ok(Redirect::permanent(uri).into_response())
 }
 
-fn router(db: PgPool) -> Router {
-    Router::new()
-        .route("/", get(index))
+async fn router(db: PgPool) -> anyhow::Result<Router> {
+    Ok(Router::new()
+        .route("/", routing::get(index))
+        .nest("/user-events", user_events::routes(db.clone()).await?)
         .nest("/accounts", accounts::routes())
         .nest("/cards", cards::routes())
         .layer(MapResponseLayer::new(|mut res: Response| {
@@ -202,7 +210,7 @@ fn router(db: PgPool) -> Router {
                 res
             })),
         )
-        .layer(AddExtensionLayer::new(db))
+        .layer(AddExtensionLayer::new(db)))
 }
 
 async fn index<B>(session: Option<Session>, req: Request<B>) -> EndpointResult {

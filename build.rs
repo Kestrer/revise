@@ -12,6 +12,7 @@ use md5::{Digest, Md5};
 
 fn main() -> Result<(), Box<dyn Error>> {
     if env::var("PROFILE").unwrap() == "debug" {
+        println!("cargo:rerun-if-changed=build.rs");
         return Ok(());
     }
 

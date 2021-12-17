@@ -61,7 +61,7 @@ impl Session {
         response
     }
 
-    pub(crate) fn clear_cookie_on(&self, response: impl IntoResponse) -> Response {
+    pub(crate) fn clear_cookie_on(response: impl IntoResponse) -> Response {
         let mut response = response.into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,

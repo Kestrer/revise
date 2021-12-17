@@ -4,43 +4,12 @@ use crate::{
 };
 use anyhow::Context as _;
 use axum::{extract::Path, http::StatusCode, response::IntoResponse, routing, Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub(crate) fn routes() -> Router {
     Router::new()
-        .route("/", routing::get(get).post(create))
+        .route("/", routing::post(create))
         .route("/:id", routing::put(modify).delete(delete))
-}
-
-#[derive(sqlx::FromRow, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Card {
-    id: i64,
-    created_at: i64,
-    terms: String,
-    definitions: String,
-    case_sensitive: bool,
-    knowledge: i16,
-    safety_net: bool,
-}
-
-async fn get(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
-
-    let cards: Vec<Card> = sqlx::query_as(
-        "\
-            SELECT id,created_at,terms,definitions,case_sensitive,knowledge,safety_net \
-            FROM cards \
-            WHERE owner = $1 \
-            ORDER BY created_at DESC\
-        ",
-    )
-    .bind(user_id)
-    .fetch_all(&mut *transaction)
-    .await
-    .context("failed to query cards")?;
-
-    Ok(Json(cards).into_response())
 }
 
 #[derive(Deserialize)]
@@ -69,9 +38,11 @@ async fn create(
         .await
         .context("failed to insert card")?;
 
+    notify_card_change(&mut *transaction, user_id).await?;
+
     transaction.commit().await?;
 
-    Ok(StatusCode::CREATED.into_response())
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 #[derive(Deserialize)]
@@ -114,6 +85,8 @@ async fn modify(
         return Err(EndpointError::new(StatusCode::NOT_FOUND));
     }
 
+    notify_card_change(&mut *transaction, user_id).await?;
+
     transaction.commit().await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -137,7 +110,21 @@ async fn delete(
         return Err(EndpointError::new(StatusCode::NOT_FOUND));
     }
 
+    notify_card_change(&mut *transaction, user_id).await?;
+
     transaction.commit().await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn notify_card_change(
+    database: impl sqlx::PgExecutor<'_>,
+    user_id: i64,
+) -> anyhow::Result<()> {
+    sqlx::query("SELECT pg_notify('user_events', $1)")
+        .bind(format!("{} ChangedCards", user_id))
+        .execute(database)
+        .await
+        .context("failed to notify card change")?;
+    Ok(())
 }

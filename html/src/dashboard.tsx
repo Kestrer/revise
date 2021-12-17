@@ -1,35 +1,84 @@
 import "normalize.css";
 
-import { createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { SetStoreFunction, createStore } from "solid-js/store";
+import { batch, createEffect, createMemo, createSignal } from "solid-js";
 import { For } from "solid-js";
 import { JSX } from "solid-js";
 import { render } from "solid-js/web";
 
 import "./dashboard.scss";
 
-interface Card {
-	id: number,
-	createdAt: number,
-	terms: string,
-	definitions: string,
-	caseSensitive: boolean,
-	knowledge: number,
-	safetyNet: boolean,
+interface UserData {
+	email: string,
+	cards: Card[],
 }
 
+interface Card {
+	id: number,
+	created_at: number,
+	terms: string,
+	definitions: string,
+	case_sensitive: boolean,
+	knowledge: number,
+	safety_net: boolean,
+}
+
+type UserDataState = "loading"
+	| "error"
+	| { data: UserData, setData: SetStoreFunction<UserData> };
+
 function App(): JSX.Element {
-	const [cards] = createResource(async () => {
-		try {
-			const response = await fetch("/cards");
-			if (response.status !== 200) {
-				throw new Error(`Status of ${response.status}: ${await response.text()}`);
-			}
-			return await response.json() as Card[];
-		} catch (e) {
-			console.error(e);
-			return null;
+	const [userData, setUserData] = createSignal<UserDataState>("loading");
+
+	// eslint-disable-next-line prefer-const
+	let events: UserEvents;
+
+	const onConnect = (): void => {
+		events.send({
+			type: "SetQueryOpts",
+			limit: 10,
+			offset: 0,
+		});
+	};
+
+	const onError = (e: Event): void => {
+		console.error("ws error: ", e);
+		setUserData("error");
+	};
+
+	const onMessage = (message: WsResponse): void => {
+		if (message.type === "Update") {
+			batch(() => {
+				let data: UserData, setData: SetStoreFunction<UserData>;
+
+				const userData_ = userData();
+				if (typeof(userData_) === "object") {
+					data = userData_.data;
+					setData = userData_.setData;
+				} else {
+					[data, setData] = createStore<UserData>({
+						email: "",
+						cards: [],
+					});
+					setUserData({ data, setData });
+				}
+
+				if (message.email !== undefined) {
+					setData("email", message.email);
+				}
+				if (message.cards !== undefined) {
+					setData("cards", message.cards);
+				}
+			});
+		} else if (message.type === "DeleteUser") {
+			location.href = "/accounts/clear-session-cookie";
+		} else if (message.type === "Error") {
+			console.error("error from ws:", message.message);
+			setUserData("error");
 		}
-	});
+	};
+
+	events = new UserEvents(onConnect, onError, onMessage);
 
 	const [addingCard, setAddingCard] = createSignal(false);
 
@@ -70,16 +119,16 @@ function App(): JSX.Element {
 			}
 		}}
 		{() => {
-			const cards_ = cards();
-			if (cards_ === undefined) {
+			const userData_ = userData();
+			if (userData_ === "loading") {
 				return <p>Loading...</p>;
-			} else if (cards_ === null) {
+			} else if (userData_ === "error") {
 				return <p>Failed to retrieve cards. Try reloading the page.</p>;
 			} else {
-				return <For each={cards_}>{card => <Card card={card} />}</For>;
+				return <For each={userData_.data.cards}>{card => <Card card={card} />}</For>;
 			}
 		}}
-		<UserAccount />
+		<UserAccount userData={userData()} />
 	</>;
 }
 
@@ -140,7 +189,7 @@ function Card(props: { card: Card }): JSX.Element {
 				<p>{props.card.definitions}</p>
 				<button type="button" onClick={() => setEditing(true)}>Edit</button>
 				<button type="button" disabled={deleting()} onClick={() => setDeleting(true)}>Delete</button>
-				<p>Created at {new Date(props.card.createdAt).toLocaleString()}</p>
+				<p>Created at {new Date(props.card.created_at).toLocaleString()}</p>
 			</div>;
 		}
 	});
@@ -183,35 +232,20 @@ function CardEditor(props: {
 	</div>;
 }
 
-interface Me {
-	email: string,
-}
-
-function UserAccount(): JSX.Element {
-	const [me] = createResource(async () => {
-		try {
-			const response = await fetch("/accounts/me");
-			if (response.status !== 200) {
-				throw new Error(`Status of ${response.status}: ${await response.text()}`);
-			}
-			return await response.json() as Me;
-		} catch (e) {
-			console.error(e);
-			return null;
-		}
-	});
-
+function UserAccount(props: { userData: UserDataState }): JSX.Element {
 	return <>
 		<h2>User Account</h2>
 		<form action="/accounts/logout" method="post"><button>Log Out</button></form>
 		{() => {
-			const me_ = me();
-			if (me_ === undefined) {
+			const userData = props.userData;
+			if (userData === "loading") {
 				return;
-			} else if (me_ === null) {
+			} else if (userData === "error") {
 				return <p>Failed to retrieve user data. Try reloading the page.</p>;
-			} else {
-				const [newEmail, setNewEmail] = createSignal(me_.email);
+			}
+			const data = userData.data;
+			return createMemo(() => {
+				const [newEmail, setNewEmail] = createSignal(data.email);
 				const [saving, setSaving] = createSignal(false);
 
 				return <form action="javascript:void(0)" onSubmit={() => {
@@ -242,12 +276,48 @@ function UserAccount(): JSX.Element {
 						value={newEmail()}
 						onInput={e => setNewEmail((e.target as HTMLInputElement).value)}
 					/></label>
-					<button disabled={saving() || newEmail() === me_.email}>Save</button>
+					<button disabled={saving() || newEmail() === data.email}>Save</button>
 				</form>;
-			}
+			});
 		}}
 		<form action="/accounts/delete" method="post"><button>Delete Account</button></form>
 	</>;
+}
+
+type WsRequest = { type: "SetQueryOpts", limit: number, offset: number };
+
+type WsResponse = never
+	| { type: "Update", email?: string, cards?: Card[] }
+	| { type: "DeleteUser" }
+	| { type: "Error", message: string };
+
+class UserEvents {
+	private ws: WebSocket;
+
+	constructor(
+		private readonly onConnect: () => void,
+		private readonly onError: (e: Event) => void,
+		private readonly onMessage: (m: WsResponse) => void,
+	) {
+		this.reconnect();
+	}
+
+	private reconnect(): void {
+		this.ws = new WebSocket(`wss://${window.location.host}/user-events`);
+		this.ws.addEventListener("open", () => this.onConnect());
+		this.ws.addEventListener("error", e => this.onError(e));
+		this.ws.addEventListener("message", e => {
+			this.onMessage(JSON.parse(e.data as string) as WsResponse);
+		});
+		this.ws.addEventListener("close", () => {
+			console.error("Websocket closed. Attempting reconnect.");
+			setTimeout(() => this.reconnect(), 2000);
+		});
+	}
+
+	send(request: WsRequest): void {
+		this.ws.send(JSON.stringify(request));
+	}
 }
 
 render(App, document.getElementById("app")!);

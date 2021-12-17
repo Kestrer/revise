@@ -7,13 +7,17 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.48"
-axum = { version = "0.4.2", features = ["headers"] }
+async-stream = "0.3.2"
+axum = { version = "0.4.2", features = ["headers", "ws"] }
 axum-server = { version = "0.3.3", features = ["tls-rustls"] }
+futures-util = "0.3.18"
 headers = "0.3.5"
 log = "0.4.14"
+parking_lot = "0.11.2"
 pretty_env_logger = "0.4.0"
 rand = "0.8.4"
 serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.73"
 sqlx = { version = "0.5.9", features = ["runtime-tokio-rustls", "postgres", "migrate"] }
 structopt = "0.3.25"
 tokio = { version = "1.14.0", features = ["macros", "rt-multi-thread", "process", "signal"] }

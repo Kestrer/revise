@@ -9,16 +9,19 @@ use axum::{
     response::{IntoResponse, Redirect},
     routing, Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::PgPool;
 
 pub(crate) fn routes() -> Router {
     Router::new()
         .route("/login", routing::post(login))
         .route("/logout", routing::post(logout))
+        // weaker form of logout, where the session is known to be ended (e.g. the account has been
+        // deleted)
+        .route("/clear-session-cookie", routing::get(clear_session_cookie))
         .route("/create", routing::post(create))
         .route("/delete", routing::post(delete))
-        .route("/me", routing::get(me).put(modify_me))
+        .route("/me", routing::put(modify_me))
 }
 
 #[derive(Deserialize)]
@@ -59,7 +62,13 @@ async fn logout(db: Extension<PgPool>, session: Session) -> EndpointResult {
         .await
         .context("failed to log out")?;
 
-    Ok(session.clear_cookie_on(Redirect::to(Uri::from_static("/"))))
+    clear_session_cookie().await
+}
+
+async fn clear_session_cookie() -> EndpointResult {
+    Ok(Session::clear_cookie_on(Redirect::to(Uri::from_static(
+        "/",
+    ))))
 }
 
 #[derive(Deserialize)]
@@ -106,27 +115,17 @@ async fn delete(session: Session, mut transaction: ReqTransaction) -> EndpointRe
         .await
         .context("failed to delete account")?;
 
+    sqlx::query("SELECT pg_notify('user_events', $1)")
+        .bind(format!("{} DeleteUser", user_id))
+        .execute(&mut *transaction)
+        .await
+        .context("failed to notify deleted user")?;
+
     transaction.commit().await?;
 
-    Ok(session.clear_cookie_on(Redirect::to(Uri::from_static("/"))))
-}
-
-#[derive(sqlx::FromRow, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Me {
-    email: String,
-}
-
-async fn me(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
-
-    let me: Me = sqlx::query_as("SELECT email FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_one(&mut *transaction)
-        .await
-        .context("failed to query users")?;
-
-    Ok(Json(me).into_response())
+    Ok(Session::clear_cookie_on(Redirect::to(Uri::from_static(
+        "/",
+    ))))
 }
 
 #[derive(Deserialize)]
@@ -154,6 +153,14 @@ async fn modify_me(
             StatusCode::NOT_FOUND,
             "account deleted",
         )));
+    }
+
+    if let Some(email) = &body.email {
+        sqlx::query("SELECT pg_notify('user_events', $1)")
+            .bind(format!("{} UpdateUser {}", user_id, email))
+            .execute(&mut *transaction)
+            .await
+            .context("failed to notify updated user")?;
     }
 
     transaction.commit().await?;
