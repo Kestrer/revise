@@ -31,6 +31,7 @@ mod assets;
 
 mod accounts;
 mod cards;
+mod event;
 mod session;
 mod user_events;
 mod utils;

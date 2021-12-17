@@ -1,4 +1,5 @@
 use crate::{
+    event,
     session::Session,
     utils::{EndpointError, EndpointResult, NonBlankString, ReqTransaction},
 };
@@ -119,12 +120,9 @@ async fn delete(
 
 async fn notify_card_change(
     database: impl sqlx::PgExecutor<'_>,
-    user_id: i64,
+    for_user: i64,
 ) -> anyhow::Result<()> {
-    sqlx::query("SELECT pg_notify('user_events', $1)")
-        .bind(format!("{} ChangedCards", user_id))
-        .execute(database)
+    event::Notify::ChangedCards { for_user }
+        .broadcast(database)
         .await
-        .context("failed to notify card change")?;
-    Ok(())
 }

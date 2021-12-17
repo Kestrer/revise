@@ -1,4 +1,5 @@
 use crate::{
+    event,
     session::Session,
     utils::{EndpointError, EndpointResult, NonEmptyString, ReqTransaction},
 };
@@ -115,11 +116,9 @@ async fn delete(session: Session, mut transaction: ReqTransaction) -> EndpointRe
         .await
         .context("failed to delete account")?;
 
-    sqlx::query("SELECT pg_notify('user_events', $1)")
-        .bind(format!("{} DeleteUser", user_id))
-        .execute(&mut *transaction)
-        .await
-        .context("failed to notify deleted user")?;
+    event::Notify::DeleteUser { id: user_id }
+        .broadcast(&mut *transaction)
+        .await?;
 
     transaction.commit().await?;
 
@@ -156,11 +155,9 @@ async fn modify_me(
     }
 
     if let Some(email) = &body.email {
-        sqlx::query("SELECT pg_notify('user_events', $1)")
-            .bind(format!("{} UpdateUser {}", user_id, email))
-            .execute(&mut *transaction)
-            .await
-            .context("failed to notify updated user")?;
+        event::Notify::UpdateUser { id: user_id, email }
+            .broadcast(&mut *transaction)
+            .await?;
     }
 
     transaction.commit().await?;

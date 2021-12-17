@@ -1,6 +1,6 @@
 //! Websocket endpoint that gives a stream of user events.
 
-use crate::{session::Session, utils::EndpointResult};
+use crate::{event, session::Session, utils::EndpointResult};
 use anyhow::{anyhow, Context as _};
 use async_stream::stream;
 use axum::{
@@ -11,46 +11,29 @@ use axum::{
     routing, Router,
 };
 use futures_util::{stream, StreamExt as _, TryStreamExt as _};
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgListener, PgExecutor, PgPool};
-use std::{
-    collections::hash_map::{self, HashMap},
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
-use tokio::{pin, sync::broadcast, task, time};
+use sqlx::{PgExecutor, PgPool};
+use std::{pin::Pin, sync::Arc};
+use tokio::{pin, sync::broadcast, task};
 
 pub(crate) async fn routes(database: PgPool) -> anyhow::Result<Router> {
-    let mut listener = PgListener::connect_with(&database)
-        .await
-        .context("couldn't subscribe to database")?;
-    listener
-        .listen("user_events")
-        .await
-        .context("couldn't listen to notifications channel")?;
+    let (events, _) = broadcast::channel(64);
 
-    let notifications = Arc::new(Mutex::new(HashMap::new()));
-
-    let task = Arc::new(AbortOnDrop(task::spawn(run_manager(
-        listener,
-        notifications.clone(),
-    ))));
+    let event_stream = event::subscribe(database.clone()).await?;
+    let task_sender = events.clone();
+    let task = Arc::new(AbortOnDrop(task::spawn(async move {
+        pin!(event_stream);
+        while let Some(event) = event_stream.next().await {
+            let _ = task_sender.send(event);
+        }
+    })));
 
     Ok(Router::new().route(
         "/",
         routing::get(|session: Session, ws: WebSocketUpgrade| async move {
             let _task = task;
             let user_id = session.user_id(&database).await?;
-            let receiver = match notifications.lock().entry(user_id) {
-                hash_map::Entry::Vacant(entry) => {
-                    let (sender, receiver) = broadcast::channel(16);
-                    entry.insert(sender);
-                    receiver
-                }
-                hash_map::Entry::Occupied(entry) => entry.get().subscribe(),
-            };
+            let receiver = events.subscribe();
 
             EndpointResult::Ok(ws.on_upgrade(move |ws| async move {
                 if let Err(e) = handle_ws(database, user_id, receiver, ws).await {
@@ -59,70 +42,6 @@ pub(crate) async fn routes(database: PgPool) -> anyhow::Result<Router> {
             }))
         }),
     ))
-}
-
-#[derive(Clone)]
-enum UserEvent {
-    UpdateUser { email: Arc<str> },
-    DeleteUser,
-    ChangedCards,
-    Lapsed,
-}
-
-async fn run_manager(
-    mut listener: PgListener,
-    notifications: Arc<Mutex<HashMap<i64, broadcast::Sender<UserEvent>>>>,
-) {
-    loop {
-        let notification = match listener.try_recv().await {
-            Ok(notification) => notification,
-            Err(e) => {
-                log::error!(
-                    "{:?}",
-                    anyhow::Error::new(e).context("couldn't receive notification from database")
-                );
-                time::sleep(Duration::from_secs(10)).await;
-                None
-            }
-        };
-
-        let notification = match notification {
-            Some(notification) => notification,
-            None => {
-                for sender in notifications.lock().values() {
-                    let _ = sender.send(UserEvent::Lapsed);
-                }
-                continue;
-            }
-        };
-
-        let mut parts = notification.payload().splitn(3, ' ');
-
-        let user = parts
-            .next()
-            .unwrap()
-            .parse()
-            .expect("invalid notification user id");
-        let event = match parts.next().expect("no notification name") {
-            "UpdateUser" => {
-                let email = parts.next().expect("UpdateUser without email");
-                UserEvent::UpdateUser {
-                    email: Arc::from(email),
-                }
-            }
-            "DeleteUser" => UserEvent::DeleteUser,
-            "ChangedCards" => UserEvent::ChangedCards,
-            kind => {
-                log::error!("unknown user event kind {}", kind);
-                continue;
-            }
-        };
-        assert_eq!(parts.next(), None);
-
-        if let Some(sender) = notifications.lock().get(&user) {
-            let _ = sender.send(event);
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -170,11 +89,11 @@ struct Card {
 async fn handle_ws(
     database: PgPool,
     user_id: i64,
-    mut events: broadcast::Receiver<UserEvent>,
+    mut events: broadcast::Receiver<event::Received>,
     ws: WebSocket,
 ) -> anyhow::Result<()> {
     enum Input {
-        UserEvent(UserEvent),
+        Event(event::Received),
         WebSocket(Vec<u8>),
         Exit,
     }
@@ -185,13 +104,13 @@ async fn handle_ws(
         stream! {
             loop {
                 match events.recv().await {
-                    Ok(event) => yield Ok(Input::UserEvent(event)),
+                    Ok(event) => yield Ok(Input::Event(event)),
                     Err(broadcast::error::RecvError::Closed) => {
                         yield Ok(Input::Exit);
                         break;
                     },
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        yield Ok(Input::UserEvent(UserEvent::Lapsed));
+                        yield Ok(Input::Event(event::Received::Lapsed));
                     },
                 }
             }
@@ -221,26 +140,32 @@ async fn handle_ws(
 
     while let Some(input) = inputs.next().await {
         match input? {
-            Input::UserEvent(UserEvent::UpdateUser { email }) => {
-                let response = WsResponse::Update {
-                    email: Some(email),
-                    cards: None,
-                };
-                send_ws(inputs.as_mut(), response).await?;
-            }
-            Input::UserEvent(UserEvent::DeleteUser) => {
-                send_ws(inputs.as_mut(), WsResponse::DeleteUser).await?;
-            }
-            Input::UserEvent(UserEvent::ChangedCards) => {
-                if let Some(opts) = &query_opts {
+            Input::Event(event::Received::UpdateUser { id, email }) => {
+                if id == user_id {
                     let response = WsResponse::Update {
-                        email: None,
-                        cards: Some(cards(&database, user_id, opts).await?),
+                        email: Some(email),
+                        cards: None,
                     };
                     send_ws(inputs.as_mut(), response).await?;
                 }
             }
-            Input::UserEvent(UserEvent::Lapsed) => {
+            Input::Event(event::Received::DeleteUser { id }) => {
+                if id == user_id {
+                    send_ws(inputs.as_mut(), WsResponse::DeleteUser).await?;
+                }
+            }
+            Input::Event(event::Received::ChangedCards { for_user }) => {
+                if for_user == user_id {
+                    if let Some(opts) = &query_opts {
+                        let response = WsResponse::Update {
+                            email: None,
+                            cards: Some(cards(&database, user_id, opts).await?),
+                        };
+                        send_ws(inputs.as_mut(), response).await?;
+                    }
+                }
+            }
+            Input::Event(event::Received::Lapsed) => {
                 if let Some(opts) = &query_opts {
                     send_ws(inputs.as_mut(), query(&database, user_id, opts).await).await?;
                 }

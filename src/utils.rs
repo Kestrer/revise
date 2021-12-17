@@ -1,7 +1,4 @@
-use std::{
-    fmt::{self, Display, Formatter},
-    ops::{Deref, DerefMut},
-};
+use std::ops::{Deref, DerefMut};
 
 use anyhow::Context as _;
 use axum::{
@@ -71,9 +68,10 @@ impl<'de> Deserialize<'de> for NonEmptyString {
         Ok(Self(s))
     }
 }
-impl Display for NonEmptyString {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+impl Deref for NonEmptyString {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
