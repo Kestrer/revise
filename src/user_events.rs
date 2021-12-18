@@ -74,6 +74,7 @@ enum WsResponse {
 }
 
 #[derive(sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Card {
     id: i64,
     created_at: i64,

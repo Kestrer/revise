@@ -6,6 +6,8 @@ import { For } from "solid-js";
 import { JSX } from "solid-js";
 import { render } from "solid-js/web";
 
+import SetPassword from "./setPassword";
+
 import "./dashboard.scss";
 
 interface UserData {
@@ -15,12 +17,12 @@ interface UserData {
 
 interface Card {
 	id: number,
-	created_at: number,
+	createdAt: number,
 	terms: string,
 	definitions: string,
-	case_sensitive: boolean,
+	caseSensitive: boolean,
 	knowledge: number,
-	safety_net: boolean,
+	safetyNet: boolean,
 }
 
 type UserDataState = "loading"
@@ -189,7 +191,7 @@ function Card(props: { card: Card }): JSX.Element {
 				<p>{props.card.definitions}</p>
 				<button type="button" onClick={() => setEditing(true)}>Edit</button>
 				<button type="button" disabled={deleting()} onClick={() => setDeleting(true)}>Delete</button>
-				<p>Created at {new Date(props.card.created_at).toLocaleString()}</p>
+				<p>Created at {new Date(props.card.createdAt).toLocaleString()}</p>
 			</div>;
 		}
 	});
@@ -252,9 +254,9 @@ function UserAccount(props: { userData: UserDataState }): JSX.Element {
 					setSaving(true);
 					void (async () => {
 						try {
-							const res = await fetch("/accounts/me", {
+							const res = await fetch("/accounts/me/email", {
 								method: "PUT",
-								body: JSON.stringify({ email: newEmail() }),
+								body: JSON.stringify(newEmail()),
 								headers: {
 									"content-type": "application/json",
 								},
@@ -264,7 +266,7 @@ function UserAccount(props: { userData: UserDataState }): JSX.Element {
 							}
 						} catch (e) {
 							console.log(e);
-							alert(`could not change email: ${(e as Error).toString()}`)
+							alert(`could not change email: ${(e as Error).toString()}`);
 						} finally {
 							setSaving(false);
 						}
@@ -280,8 +282,55 @@ function UserAccount(props: { userData: UserDataState }): JSX.Element {
 				</form>;
 			});
 		}}
+		<ChangePassword />
 		<form action="/accounts/delete" method="post"><button>Delete Account</button></form>
 	</>;
+}
+
+function ChangePassword(): JSX.Element {
+	const oldPassword = (<input type="password" required />) as HTMLInputElement;
+	const [newPassword, setNewPassword] = createSignal("");
+	const [saving, setSaving] = createSignal(false);
+	const [error, setError] = createSignal("");
+
+	const form = <form action="javascript:void(0)" onSubmit={() => {
+		setSaving(true);
+		setError("");
+		void (async () => {
+			try {
+				const res = await fetch("/accounts/me/password", {
+					method: "PUT",
+					body: JSON.stringify({
+						oldPassword: oldPassword.value,
+						newPassword: newPassword(),
+					}),
+					headers: {
+						"content-type": "application/json",
+					},
+				});
+				if (res.status === 401) {
+					throw new Error("old password incorrect");
+				}
+				if (!res.ok) {
+					throw new Error(`${res.status}`);
+				}
+				form.reset();
+			} catch (e) {
+				setError((e as Error).toString());
+			} finally {
+				setSaving(false);
+			}
+		})();
+	}}>
+		<fieldset>
+			<legend>Change password</legend>
+			<label>Old password: {oldPassword}</label>
+			<SetPassword passwordValue={setNewPassword} />
+			<button disabled={saving()}>Change password</button>
+			<p>{error}</p>
+		</fieldset>
+	</form> as HTMLFormElement;
+	return form;
 }
 
 type WsRequest = { type: "SetQueryOpts", limit: number, offset: number };

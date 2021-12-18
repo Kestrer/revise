@@ -6,21 +6,6 @@
 		<title>revise</title>
 	</head>
 	<body>
-		<form action="/accounts/login" method="post">
-			<h2>Log In</h2>
-			<p style="color:red" id="loginError"></p>
-			<p><label>Email: <input name="email" type="email" required></label></p>
-			<p><label>Password: <input name="password" type="password" required></label></p>
-			<button>Log in</button>
-		</form>
-
-		<form id="createAccountForm" action="/accounts/create" method="post">
-			<h2>Create Account</h2>
-			<p style="color:red" id="createAccountError"></p>
-			<p><label>Email: <input name="email" type="email" required></label></p>
-			<p><label>Password: <input name="password" type="password" minlength="8" required></label></p>
-			<p><label>Confirm password: <input name="password2" type="password" required></label></p>
-			<button>Create account</button>
-		</form>
+		<div id="app"></div>
 	</body>
 </html>

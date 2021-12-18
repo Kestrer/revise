@@ -14,7 +14,7 @@ pub(crate) fn routes() -> Router {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateCard {
     created_at: i64,
     terms: NonBlankString,
@@ -47,7 +47,7 @@ async fn create(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ModifyCard {
     terms: Option<NonBlankString>,
     definitions: Option<NonBlankString>,

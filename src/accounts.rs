@@ -21,10 +21,12 @@ pub(crate) fn routes() -> Router {
         .route("/clear-session-cookie", routing::get(clear_session_cookie))
         .route("/create", routing::post(create))
         .route("/delete", routing::post(delete))
-        .route("/me", routing::put(modify_me))
+        .route("/me/email", routing::put(set_email))
+        .route("/me/password", routing::put(set_password))
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LogIn {
     email: String,
     password: String,
@@ -78,6 +80,7 @@ async fn clear_session_cookie() -> EndpointResult {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateAccount {
     email: NonEmptyString,
     password: NonEmptyString,
@@ -132,25 +135,19 @@ async fn delete(session: Session, mut transaction: ReqTransaction) -> EndpointRe
     ))))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModifyMe {
-    email: Option<NonEmptyString>,
-}
-
-async fn modify_me(
+async fn set_email(
     session: Session,
-    body: Json<ModifyMe>,
+    body: Json<NonEmptyString>,
     mut transaction: ReqTransaction,
 ) -> EndpointResult {
     let user_id = session.user_id_http(&mut *transaction).await?;
 
-    let res = sqlx::query("UPDATE users SET email = COALESCE($1, email) WHERE id = $2")
-        .bind(&body.email)
+    let res = sqlx::query("UPDATE users SET email = $1 WHERE id = $2")
+        .bind(&*body)
         .bind(user_id)
         .execute(&mut *transaction)
         .await
-        .context("couldn't modify user")?;
+        .context("couldn't set user email")?;
 
     if res.rows_affected() == 0 {
         return Err(EndpointError::new((
@@ -159,10 +156,48 @@ async fn modify_me(
         )));
     }
 
-    if let Some(email) = &body.email {
-        event::Notify::UpdateUser { id: user_id, email }
-            .broadcast(&mut *transaction)
-            .await?;
+    event::Notify::UpdateUser { id: user_id, email: &body }
+        .broadcast(&mut *transaction)
+        .await?;
+
+    transaction.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetPassword {
+    old_password: NonEmptyString,
+    new_password: NonEmptyString,
+}
+
+async fn set_password(
+    session: Session,
+    body: Json<SetPassword>,
+    mut transaction: ReqTransaction,
+) -> EndpointResult {
+    let user_id = session.user_id_http(&mut *transaction).await?;
+
+    let res = sqlx::query(
+        "\
+            UPDATE users \
+                SET password = crypt($1, gen_salt('bf', 8)) \
+                WHERE id = $2 AND password = crypt($3, password)\
+        "
+    )
+    .bind(&*body.new_password)
+    .bind(user_id)
+    .bind(&*body.old_password)
+    .execute(&mut *transaction)
+    .await
+    .context("couldn't set password")?;
+
+    if res.rows_affected() == 0 {
+        return Err(EndpointError::new((
+            StatusCode::UNAUTHORIZED,
+            "old password incorrect",
+        )));
     }
 
     transaction.commit().await?;

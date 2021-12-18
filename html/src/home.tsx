@@ -1,29 +1,38 @@
 import "normalize.css";
 
+import { JSX } from "solid-js";
+import { render } from "solid-js/web";
+
+import SetPassword from "./setPassword";
+
 const params = new URLSearchParams(location.search);
-if (params.has("loginError")) {
-	document.getElementById("loginError")!.append("Username or password was incorrect.");
-}
-if (params.has("createAccountError")) {
-	document.getElementById("createAccountError")!.append("An account with that email already exists.");
-}
+
+const loginError = params.has("loginError")
+	&& <p style="color:red">Username or password was incorrect.</p>;
+
+const createAccountError = params.has("createAccountError")
+	&& <p style="color:red">An account with that email already exists.</p>;
+
 history.pushState(null, "", "/");
 
-(() => {
-	const form = document.getElementById("createAccountForm") as HTMLFormElement;
-	const password = form.elements.namedItem("password") as HTMLInputElement;
-	const password2 = form.elements.namedItem("password2") as HTMLInputElement;
+function App(): JSX.Element {
+	return <>
+		<form action="/accounts/login" method="post">
+			<h2>Log In</h2>
+			{loginError}
+			<p><label>Email: <input name="email" type="email" required /></label></p>
+			<p><label>Password: <input name="password" type="password" required /></label></p>
+			<button>Log in</button>
+		</form>
 
-	const updateValidity = (): void => {
-		if (password.value !== password2.value) {
-			password2.setCustomValidity("Passwords are not equal");
-		} else {
-			password2.setCustomValidity("");
-		}
-	};
+		<form id="createAccountForm" action="/accounts/create" method="post">
+			<h2>Create Account</h2>
+			{createAccountError}
+			<p><label>Email: <input name="email" type="email" required /></label></p>
+			<SetPassword passwordName="password" />
+			<button>Create account</button>
+		</form>
+	</>;
+}
 
-	password.addEventListener("input", updateValidity);
-	password2.addEventListener("input", updateValidity);
-
-	form.addEventListener("submit", () => password2.disabled = true);
-})();
+render(App, document.getElementById("app")!);
