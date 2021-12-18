@@ -1,3 +1,4 @@
+use crate::utils::EndpointResult;
 use anyhow::Context as _;
 use axum::{
     async_trait,
@@ -11,9 +12,12 @@ use axum::{
 use headers::HeaderMapExt as _;
 use rand::seq::SliceRandom as _;
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, encode::IsNull, postgres::{PgArgumentBuffer, PgTypeInfo}};
+use sqlx::{
+    encode::IsNull,
+    postgres::{PgArgumentBuffer, PgTypeInfo},
+    Postgres,
+};
 use std::{str, sync::Arc};
-use crate::utils::EndpointResult;
 
 /// A session token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,16 +33,23 @@ impl Session {
         Self(Arc::from(str::from_utf8(&bytes).unwrap()))
     }
 
-    pub(crate) async fn user_id(&self, db: impl sqlx::PgExecutor<'_>) -> EndpointResult<i64> {
+    pub(crate) async fn user_id_http(&self, db: impl sqlx::PgExecutor<'_>) -> EndpointResult<i64> {
+        Ok(self
+            .user_id(db)
+            .await?
+            .ok_or_else(|| (StatusCode::UNAUTHORIZED, "session token invalid").into_response())?)
+    }
+
+    pub(crate) async fn user_id(
+        &self,
+        db: impl sqlx::PgExecutor<'_>,
+    ) -> anyhow::Result<Option<i64>> {
         Ok(
             sqlx::query_scalar("SELECT for_user FROM session_cookies WHERE cookie_value = $1")
                 .bind(self)
                 .fetch_optional(db)
                 .await
-                .context("failed to get user session")?
-                .ok_or_else(|| {
-                    (StatusCode::UNAUTHORIZED, "session token invalid").into_response()
-                })?,
+                .context("failed to get user session")?,
         )
     }
 

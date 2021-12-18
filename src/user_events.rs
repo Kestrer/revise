@@ -32,11 +32,9 @@ pub(crate) async fn routes(database: PgPool) -> anyhow::Result<Router> {
         "/",
         routing::get(|session: Session, ws: WebSocketUpgrade| async move {
             let _task = task;
-            let user_id = session.user_id(&database).await?;
             let receiver = events.subscribe();
-
             EndpointResult::Ok(ws.on_upgrade(move |ws| async move {
-                if let Err(e) = handle_ws(database, session, user_id, receiver, ws).await {
+                if let Err(e) = handle_ws(database, session, receiver, ws).await {
                     log::error!("ws stream ended with error: {:?}", anyhow!(e));
                 }
             }))
@@ -89,10 +87,17 @@ struct Card {
 async fn handle_ws(
     database: PgPool,
     user_session: Session,
-    user_id: i64,
     mut events: broadcast::Receiver<event::Received>,
-    ws: WebSocket,
+    mut ws: WebSocket,
 ) -> anyhow::Result<()> {
+    let user_id = match user_session.user_id(&database).await? {
+        Some(user_id) => user_id,
+        None => {
+            send_to_ws(&mut ws, WsResponse::LogOut).await?;
+            return Ok(());
+        }
+    };
+
     enum Input {
         Event(event::Received),
         WebSocket(Vec<u8>),
@@ -132,11 +137,7 @@ async fn handle_ws(
         mut stream: Pin<&mut stream::Select<A, stream::TryFilterMap<WebSocket, B, C>>>,
         msg: WsResponse,
     ) -> anyhow::Result<()> {
-        let json = serde_json::to_string(&msg).expect("serializing ws response as json failed");
-        let msg = ws::Message::Text(json);
-        let mut stream = stream.as_mut().get_pin_mut().1.get_pin_mut();
-        stream.send(msg).await.context("couldn't send ws message")?;
-        Ok(())
+        send_to_ws(&mut stream.as_mut().get_pin_mut().1.get_pin_mut(), msg).await
     }
 
     while let Some(input) = inputs.next().await {
@@ -199,6 +200,13 @@ async fn handle_ws(
         }
     }
 
+    Ok(())
+}
+
+async fn send_to_ws(ws: &mut WebSocket, msg: WsResponse) -> anyhow::Result<()> {
+    let json = serde_json::to_string(&msg).expect("serializing ws response as json failed");
+    let msg = ws::Message::Text(json);
+    ws.send(msg).await.context("couldn't send ws message")?;
     Ok(())
 }
 

@@ -113,7 +113,7 @@ async fn create(form: Form<CreateAccount>, mut transaction: ReqTransaction) -> E
 }
 
 async fn delete(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
+    let user_id = session.user_id_http(&mut *transaction).await?;
 
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
@@ -143,7 +143,7 @@ async fn modify_me(
     body: Json<ModifyMe>,
     mut transaction: ReqTransaction,
 ) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
+    let user_id = session.user_id_http(&mut *transaction).await?;
 
     let res = sqlx::query("UPDATE users SET email = COALESCE($1, email) WHERE id = $2")
         .bind(&body.email)

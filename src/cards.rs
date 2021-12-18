@@ -27,7 +27,7 @@ async fn create(
     body: Json<CreateCard>,
     mut transaction: ReqTransaction,
 ) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
+    let user_id = session.user_id_http(&mut *transaction).await?;
 
     sqlx::query("INSERT INTO cards VALUES (DEFAULT, $1, $2, $3, $4, $5)")
         .bind(user_id)
@@ -60,7 +60,7 @@ async fn modify(
     body: Json<ModifyCard>,
     mut transaction: ReqTransaction,
 ) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
+    let user_id = session.user_id_http(&mut *transaction).await?;
 
     let res = sqlx::query(
         "\
@@ -98,7 +98,7 @@ async fn delete(
     session: Session,
     mut transaction: ReqTransaction,
 ) -> EndpointResult {
-    let user_id = session.user_id(&mut *transaction).await?;
+    let user_id = session.user_id_http(&mut *transaction).await?;
 
     let res = sqlx::query("DELETE FROM cards WHERE id = $1 AND OWNER = $2")
         .bind(*id)

@@ -1,5 +1,6 @@
 //! The event system broadcasts change notifications to everyone listening.
 
+use crate::session::Session;
 use anyhow::Context as _;
 use async_stream::stream;
 use futures_util::Stream;
@@ -7,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgListener, PgExecutor, PgPool};
 use std::{sync::Arc, time::Duration};
 use tokio::time;
-use crate::session::Session;
 
 #[derive(Serialize)]
 pub(crate) enum Notify<'a> {
