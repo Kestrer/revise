@@ -5,13 +5,12 @@ use crate::{
 };
 use anyhow::Context;
 use axum::{
-    extract::{Extension, Form},
+    extract::Form,
     http::{StatusCode, Uri},
     response::{IntoResponse, Redirect},
     routing, Json, Router,
 };
 use serde::Deserialize;
-use sqlx::PgPool;
 
 pub(crate) fn routes() -> Router {
     Router::new()
@@ -56,12 +55,18 @@ async fn login(form: Form<LogIn>, mut transaction: ReqTransaction) -> EndpointRe
     Ok(session.set_cookie_on(Redirect::to(Uri::from_static("/"))))
 }
 
-async fn logout(db: Extension<PgPool>, session: Session) -> EndpointResult {
+async fn logout(session: Session, mut transaction: ReqTransaction) -> EndpointResult {
     sqlx::query("DELETE FROM session_cookies WHERE cookie_value = $1")
         .bind(&session)
-        .execute(&*db)
+        .execute(&mut *transaction)
         .await
         .context("failed to log out")?;
+
+    event::Notify::LogOut { session: &session }
+        .broadcast(&mut *transaction)
+        .await?;
+
+    transaction.commit().await?;
 
     clear_session_cookie().await
 }

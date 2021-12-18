@@ -36,7 +36,7 @@ pub(crate) async fn routes(database: PgPool) -> anyhow::Result<Router> {
             let receiver = events.subscribe();
 
             EndpointResult::Ok(ws.on_upgrade(move |ws| async move {
-                if let Err(e) = handle_ws(database, user_id, receiver, ws).await {
+                if let Err(e) = handle_ws(database, session, user_id, receiver, ws).await {
                     log::error!("ws stream ended with error: {:?}", anyhow!(e));
                 }
             }))
@@ -69,7 +69,7 @@ enum WsResponse {
         #[serde(skip_serializing_if = "Option::is_none")]
         cards: Option<Vec<Card>>,
     },
-    DeleteUser,
+    LogOut,
     Error {
         message: String,
     },
@@ -88,6 +88,7 @@ struct Card {
 
 async fn handle_ws(
     database: PgPool,
+    user_session: Session,
     user_id: i64,
     mut events: broadcast::Receiver<event::Received>,
     ws: WebSocket,
@@ -151,7 +152,12 @@ async fn handle_ws(
             }
             Input::Event(event::Received::DeleteUser { id }) => {
                 if id == user_id {
-                    send_ws(inputs.as_mut(), WsResponse::DeleteUser).await?;
+                    send_ws(inputs.as_mut(), WsResponse::LogOut).await?;
+                }
+            }
+            Input::Event(event::Received::LogOut { session }) => {
+                if session == user_session {
+                    send_ws(inputs.as_mut(), WsResponse::LogOut).await?;
                 }
             }
             Input::Event(event::Received::ChangedCards { for_user }) => {
@@ -210,7 +216,7 @@ async fn query(database: &PgPool, user_id: i64, opts: &QueryOpts) -> WsResponse 
             .context("failed to query user")?
         {
             Some(email) => email,
-            None => return Ok(WsResponse::DeleteUser),
+            None => return Ok(WsResponse::LogOut),
         };
 
         let cards = cards(&mut transaction, user_id, opts).await?;

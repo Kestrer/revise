@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgListener, PgExecutor, PgPool};
 use std::{sync::Arc, time::Duration};
 use tokio::time;
+use crate::session::Session;
 
 #[derive(Serialize)]
 pub(crate) enum Notify<'a> {
     UpdateUser { id: i64, email: &'a str },
     DeleteUser { id: i64 },
+    LogOut { session: &'a Session },
     ChangedCards { for_user: i64 },
 }
 
@@ -34,6 +36,9 @@ pub(crate) enum Received {
     },
     DeleteUser {
         id: i64,
+    },
+    LogOut {
+        session: Session,
     },
     ChangedCards {
         for_user: i64,

@@ -70,7 +70,7 @@ function App(): JSX.Element {
 					setData("cards", message.cards);
 				}
 			});
-		} else if (message.type === "DeleteUser") {
+		} else if (message.type === "LogOut") {
 			location.href = "/accounts/clear-session-cookie";
 		} else if (message.type === "Error") {
 			console.error("error from ws:", message.message);
@@ -288,7 +288,7 @@ type WsRequest = { type: "SetQueryOpts", limit: number, offset: number };
 
 type WsResponse = never
 	| { type: "Update", email?: string, cards?: Card[] }
-	| { type: "DeleteUser" }
+	| { type: "LogOut" }
 	| { type: "Error", message: string };
 
 class UserEvents {
