@@ -263,12 +263,8 @@ impl FromStr for Weights {
         let weights = [a?, b?, c?, d?];
 
         anyhow::ensure!(
-            weights.iter().all(|&w| w >= 0.0 && (w.is_normal() || w == 0.0)),
-            "all weights must be normal"
-        );
-        anyhow::ensure!(
-            weights.iter().sum::<f64>().is_normal(),
-            "weights must not sum to zero"
+            weights.iter().all(|&w| w > 0.0 && w.is_normal()),
+            "all weights must be normal and positive"
         );
 
         Ok(Self(weights))
