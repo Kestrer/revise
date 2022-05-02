@@ -198,7 +198,7 @@ impl Database {
                 [card.as_sql()],
             )?;
             transaction.execute(
-                "UPDATE v1 SET knowledge_level = IIF(safety_net, knowledge_level, knowledge_level - 1), safety_net = false WHERE card = ?",
+                "UPDATE v1 SET knowledge_level = IIF(safety_net AND knowledge_level < 3, knowledge_level, knowledge_level - 1), safety_net = false WHERE card = ?",
                 [card.as_sql()],
             )?;
             transaction.commit()?;
