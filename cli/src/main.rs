@@ -1,5 +1,5 @@
 #![warn(clippy::all, clippy::pedantic)]
-#![allow(clippy::non_ascii_literal)]
+#![allow(clippy::non_ascii_literal, clippy::items_after_statements)]
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;

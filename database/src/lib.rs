@@ -10,6 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
+use std::ptr;
 
 use bincode::Options as _;
 use rusqlite::types::ToSql;
@@ -77,10 +78,12 @@ impl Database {
     }
 
     /// Get how well known a set of cards are.
+    ///
+    /// The resulting iterator may not be in the same order as the input iterator.
     pub fn knowledge_all<'a, I>(
         &self,
         cards: I,
-    ) -> Result<impl Iterator<Item = Knowledge> + 'a, GetKnowledgeError>
+    ) -> Result<impl 'a + Clone + Iterator<Item = (&'a CardKey, Knowledge)>, GetKnowledgeError>
     where
         I: IntoIterator<Item = &'a CardKey>,
         I::IntoIter: ExactSizeIterator + Clone + 'a,
@@ -99,18 +102,17 @@ impl Database {
                 .query_map(
                     rusqlite::params_from_iter(cards.clone().map(CardKey::as_sql)),
                     |row| {
-                        Ok((
-                            CardKey::from_sql(row.get_unwrap(0)),
-                            Knowledge {
-                                level: KnowledgeLevel::new(row.get_unwrap(1)).unwrap(),
-                                safety_net: row.get_unwrap(2),
-                            },
-                        ))
+                        let card_key = CardKey::from_sql(row.get_unwrap(0));
+                        let knowledge = Knowledge {
+                            level: KnowledgeLevel::new(row.get_unwrap(1)).unwrap(),
+                            safety_net: row.get_unwrap(2),
+                        };
+                        Ok((card_key, knowledge))
                     },
                 )?
                 .collect::<Result<HashMap<_, _>, _>>()?;
 
-            Ok(cards.map(move |card| result.get(card).copied().unwrap_or_default()))
+            Ok(cards.map(move |card| (card, result.get(card).copied().unwrap_or_default())))
         })()
         .map_err(|inner| GetKnowledgeError { inner })
     }
@@ -202,92 +204,6 @@ impl Database {
         })()
         .map_err(|inner| RecordIncorrectError { inner})
     }
-
-    /// Get the distribution of how well known the given list of cards are.
-    ///
-    /// The cards in `cards` should all be unique.
-    pub fn level_distribution<'a, I>(
-        &self,
-        cards: I,
-    ) -> Result<[usize; 4], GetLevelDistributionError>
-    where
-        I: IntoIterator<Item = &'a CardKey>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        (|| {
-            let cards = cards.into_iter();
-            let cards_len = cards.len();
-
-            let sql = format!("SELECT knowledge_level FROM v1 WHERE {}", card_in(&cards));
-
-            let mut retrieved = 0;
-
-            let mut distribution = self
-                .connection
-                .prepare(&sql)?
-                .query_map(
-                    rusqlite::params_from_iter(cards.map(CardKey::as_sql)),
-                    |row| Ok(KnowledgeLevel::new(row.get_unwrap(0)).unwrap()),
-                )?
-                .try_fold(
-                    [0; 4],
-                    |mut distribution, knowledge_level| -> rusqlite::Result<_> {
-                        distribution[usize::from(knowledge_level?.get())] += 1;
-                        retrieved += 1;
-                        Ok(distribution)
-                    },
-                )?;
-
-            assert_eq!(distribution[0], 0);
-            distribution[0] = cards_len - retrieved;
-
-            Ok(distribution)
-        })()
-        .map_err(|inner| GetLevelDistributionError { inner })
-    }
-
-    /// Set the knowledge of all terms to level 2 if they are all level 3.
-    ///
-    /// The cards in `cards` should all be unique.
-    pub fn make_incomplete<'a, I>(&mut self, cards: I) -> Result<(), MakeIncompleteError>
-    where
-        I: IntoIterator<Item = &'a CardKey>,
-        I::IntoIter: ExactSizeIterator + Clone,
-    {
-        (|| {
-            let cards = cards.into_iter();
-
-            let query_sql = format!(
-                "SELECT COUNT(*) FROM v1 WHERE knowledge_level = 3 AND {}",
-                card_in(&cards)
-            );
-
-            let transaction = self
-                .connection
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-
-            let learnt: usize = transaction.query_row(
-                &query_sql,
-                rusqlite::params_from_iter(cards.clone().map(CardKey::as_sql)),
-                |row| Ok(row.get_unwrap(0)),
-            )?;
-
-            if learnt == cards.len() {
-                let sql = format!(
-                    "UPDATE v1 SET knowledge_level = 2, safety_net = false WHERE {}",
-                    card_in(&cards)
-                );
-
-                transaction
-                    .execute(&sql, rusqlite::params_from_iter(cards.map(CardKey::as_sql)))?;
-            }
-
-            transaction.commit()?;
-
-            Ok(())
-        })()
-        .map_err(|inner| MakeIncompleteError { inner })
-    }
 }
 
 /// Error in [`Database::open`].
@@ -352,14 +268,6 @@ pub struct RecordIncorrectError {
 #[derive(Debug, Error)]
 #[error("failed to get distribution of card knowledge")]
 pub struct GetLevelDistributionError {
-    #[source]
-    inner: rusqlite::Error,
-}
-
-/// Error in [`Database::make_incomplete`].
-#[derive(Debug, Error)]
-#[error("failed to make cards incomplete")]
-pub struct MakeIncompleteError {
     #[source]
     inner: rusqlite::Error,
 }
@@ -450,21 +358,12 @@ fn test_database() {
             assert_eq!(knowledge.safety_net, safety_net);
         }
 
-        for (knowledge, (level, safety_net)) in db.knowledge_all(&cards).unwrap().zip(levels) {
+        for ((_, knowledge), (level, safety_net)) in db.knowledge_all(&cards).unwrap().zip(levels) {
             assert_eq!(knowledge.level.get(), level);
             assert_eq!(knowledge.safety_net, safety_net);
         }
-
-        let distribution = db.level_distribution(&cards).unwrap();
-        for i in 0..4 {
-            let expected = levels.iter().filter(|(level, _)| *level == i).count();
-            assert_eq!(distribution[usize::from(i)], expected);
-        }
     };
 
-    assert_knowledge(&db, [(0, false), (0, false)]);
-
-    db.make_incomplete(&cards).unwrap();
     assert_knowledge(&db, [(0, false), (0, false)]);
 
     db.record_correct(&cards[0]).unwrap();
@@ -482,14 +381,8 @@ fn test_database() {
     db.record_correct(&cards[1]).unwrap();
     assert_knowledge(&db, [(2, true), (3, true)]);
 
-    db.make_incomplete(&cards).unwrap();
-    assert_knowledge(&db, [(2, true), (3, true)]);
-
     db.record_correct(&cards[0]).unwrap();
     assert_knowledge(&db, [(3, true), (3, true)]);
-
-    db.make_incomplete(&cards).unwrap();
-    assert_knowledge(&db, [(2, false), (2, false)]);
 
     for level in 0..=3 {
         let level = KnowledgeLevel(level);
@@ -507,7 +400,8 @@ fn test_database() {
 }
 
 /// A unique key that every card has.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::derive_hash_xor_eq)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub struct CardKey(Vec<u8>);
 
 impl CardKey {
@@ -545,6 +439,12 @@ impl CardKey {
 
     fn from_sql(sql: Vec<u8>) -> Self {
         Self(sql)
+    }
+}
+
+impl PartialEq for CardKey {
+    fn eq(&self, other: &Self) -> bool {
+        ptr::eq(self, other) || self.0 == other.0
     }
 }
 

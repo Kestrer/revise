@@ -19,9 +19,6 @@ thiserror = "1.0.26"
 revise-database = { path = "../database" }
 revise-parser = { path = "../parser" }
 
-[dev-dependencies]
-maplit = "1.0.2"
-
 [[bin]]
 name = "revise"
 path = "src/main.rs"

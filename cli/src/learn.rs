@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Display, Formatter};
 use std::io;
+use std::marker::PhantomData;
 use std::panic;
 
 use crossterm::{
@@ -11,6 +12,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 
+use rand::distributions::Distribution as _;
 use rand::seq::IteratorRandom as _;
 use rand::Rng;
 
@@ -23,21 +25,20 @@ pub fn learn(
     cards: &HashMap<CardKey, Card>,
     mut out: impl io::Write,
 ) -> anyhow::Result<()> {
-    database.make_incomplete(cards.keys())?;
-
     let mut rng = rand::thread_rng();
 
     let _raw_guard = enter_raw()?;
 
-    let mut session = Session::new(database, cards.keys(), rand::thread_rng())?;
+    let mut session = Session::new();
 
-    while let Some(card_key) = session.question_card() {
-        let card = &cards[card_key];
+    loop {
+        let question = session.generate_question(database, cards.keys(), &mut rng)?;
+        let card = &cards[question.card_key()];
 
         queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
         write!(out, "{}\r\n", title.bold())?;
 
-        let distribution = session.database.level_distribution(cards.keys())?;
+        let distribution = question.level_distribution();
         write!(
             out,
             "{} {} {} {}\r\n",
@@ -109,7 +110,7 @@ pub fn learn(
             }
         };
 
-        session.record_result(correct)?;
+        question.record_result(correct)?;
     }
 
     Ok(())
@@ -154,100 +155,215 @@ impl Display for DisplayAnswer<'_> {
     }
 }
 
-struct Session<'a, R: Rng> {
-    database: &'a mut Database,
-    active_cards: Vec<&'a CardKey>,
-    question: Option<usize>,
-    rng: R,
+/// All state stored in a learning session.
+struct Session<'cards> {
+    /// The previous card that was asked.
+    /// This is used to avoid asking the same card twice in a row.
+    previous_card: Option<&'cards CardKey>,
 }
-impl<'a, R: Rng> Session<'a, R> {
-    fn new<I>(database: &'a mut Database, cards: I, mut rng: R) -> anyhow::Result<Self>
+impl<'cards> Session<'cards> {
+    fn new() -> Self {
+        Self {
+            previous_card: None,
+        }
+    }
+
+    fn generate_question<'database, C, R>(
+        &mut self,
+        database: &'database mut Database,
+        cards: C,
+        rng: &mut R,
+    ) -> anyhow::Result<Question<'_, 'database, 'cards>>
     where
-        I: IntoIterator<Item = &'a CardKey>,
-        I::IntoIter: ExactSizeIterator + Clone + 'a,
+        C: IntoIterator<Item = &'cards CardKey>,
+        C::IntoIter: 'cards + Clone + ExactSizeIterator,
+        R: Rng,
     {
         let cards = cards.into_iter();
 
-        let active_cards = cards
-            .clone()
-            .zip(database.knowledge_all(cards)?)
-            .filter(|(_, knowledge)| knowledge.level.get() < 3)
-            .map(|(key, _)| key)
-            .collect::<Vec<_>>();
-
-        let question = if active_cards.is_empty() {
-            None
-        } else {
-            Some(rng.gen_range(0..active_cards.len()))
-        };
-
-        Ok(Self {
-            database,
-            active_cards,
-            question,
-            rng,
-        })
-    }
-
-    fn question_card(&self) -> Option<&'a CardKey> {
-        Some(self.active_cards[self.question?])
-    }
-
-    fn record_result(&mut self, correct: bool) -> anyhow::Result<()> {
-        let prev_index = self.question.unwrap();
-        let prev_key = self.active_cards[prev_index];
-
-        let mut avoid_picking_prev_index = self.active_cards.len() > 1;
-
-        if correct {
-            self.database.record_correct(prev_key)?;
-
-            if self.database.knowledge(prev_key)?.level.get() == 3 {
-                self.active_cards.swap_remove(prev_index);
-                avoid_picking_prev_index = false;
-            }
-        } else {
-            self.database.record_incorrect(prev_key)?;
+        match cards.len() {
+            0 => panic!("no cards given to `generate_question`"),
+            1 => self.previous_card = None,
+            _ => {}
         }
 
-        self.question = if self.active_cards.is_empty() {
-            None
+        let card_knowledges = database
+            .knowledge_all(cards)?
+            .map(|(card, knowledge)| (card, usize::from(knowledge.level.get())));
+
+        let mut level_distribution = [0; 4];
+        let mut choosable_distribution = [0; 4];
+        for (card, knowledge) in card_knowledges.clone() {
+            level_distribution[knowledge] += 1;
+            if self.previous_card != Some(card) {
+                choosable_distribution[knowledge] += 1;
+            }
+        }
+
+        const MULTIPLIERS: &[f64] = &[4.0, 3.0, 2.0, 1.0];
+        #[allow(clippy::cast_precision_loss)]
+        let weights = choosable_distribution
+            .into_iter()
+            .zip(MULTIPLIERS)
+            .map(|(weight, multiplier)| (weight as f64) * multiplier);
+        let card_level = rand::distributions::WeightedIndex::new(weights)
+            .unwrap()
+            .sample(rng);
+        let card_index = rng.gen_range(0..choosable_distribution[card_level]);
+
+        let (card_index, (card_key, _)) = card_knowledges
+            .enumerate()
+            .filter(|&(_, (card_key, knowledge))| {
+                Some(card_key) != self.previous_card && knowledge == card_level
+            })
+            .nth(card_index)
+            .unwrap();
+
+        self.previous_card = Some(card_key);
+
+        Ok(Question {
+            _session: PhantomData,
+            database,
+            card_index,
+            card_key,
+            level_distribution,
+        })
+    }
+}
+
+struct Question<'session, 'database, 'cards> {
+    // a session should only support one question at once
+    _session: PhantomData<&'session mut Session<'cards>>,
+    database: &'database mut Database,
+    card_index: usize,
+    card_key: &'cards CardKey,
+    level_distribution: [usize; 4],
+}
+
+impl<'session, 'database, 'cards> Question<'session, 'database, 'cards> {
+    fn card_index(&self) -> usize {
+        self.card_index
+    }
+
+    fn card_key(&self) -> &'cards CardKey {
+        self.card_key
+    }
+
+    fn level_distribution(&self) -> [usize; 4] {
+        self.level_distribution
+    }
+
+    fn record_result(self, correct: bool) -> anyhow::Result<()> {
+        if correct {
+            self.database.record_correct(self.card_key)?;
         } else {
-            if avoid_picking_prev_index {
-                self.active_cards.swap_remove(prev_index);
-            }
-
-            let index = self.rng.gen_range(0..self.active_cards.len());
-
-            if avoid_picking_prev_index {
-                self.active_cards.push(prev_key);
-            }
-
-            Some(index)
-        };
-
+            self.database.record_incorrect(self.card_key)?;
+        }
         Ok(())
     }
 }
 
-#[test]
-fn test_session() {
-    use maplit::btreeset;
+#[cfg(test)]
+mod tests {
+    use std::collections::btree_set::BTreeSet;
+
     use rand::rngs::mock::StepRng;
+    use rand::Rng;
 
-    let mut database = Database::open_in_memory().unwrap();
-    let cards = [
-        CardKey::new(&btreeset!("A"), &btreeset!("a")),
-        CardKey::new(&btreeset!("B"), &btreeset!("b")),
-        CardKey::new(&btreeset!("C"), &btreeset!("c")),
-    ];
-    let rng = StepRng::new(0, 15_701_263_798_120_398_361);
-    let mut session = Session::new(&mut database, &cards, rng).unwrap();
+    use revise_database::{CardKey, Database};
 
-    for i in [0, 1, 0, 2, 1, 2, 0, 2, 1] {
-        assert_eq!(session.question_card(), Some(&cards[i]));
-        session.record_result(true).unwrap();
+    use super::Session;
+
+    fn btreeset<I, S>(iter: I) -> BTreeSet<S>
+    where
+        I: IntoIterator<Item = S>,
+        S: Ord + AsRef<[u8]>,
+    {
+        iter.into_iter().collect()
     }
 
-    assert_eq!(session.question_card(), None);
+    fn cards(n: usize) -> Vec<CardKey> {
+        (0_u8..=255)
+            .map(|b| {
+                let set = btreeset([[b]]);
+                CardKey::new(&set, &set)
+            })
+            .take(n)
+            .collect()
+    }
+
+    #[test]
+    fn deterministic() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut rng = StepRng::new(0, 15_701_263_798_120_398_361);
+        let mut session = Session::new();
+
+        let cards = cards(3);
+
+        for expected_index in [2, 1, 0, 2, 0, 1, 0, 2, 1, 0, 2] {
+            let question = session
+                .generate_question(&mut database, &cards, &mut rng)
+                .unwrap();
+
+            let chosen_index = cards
+                .iter()
+                .position(|card| card == question.card_key())
+                .unwrap();
+            assert_eq!(chosen_index, question.card_index());
+            assert_eq!(chosen_index, expected_index);
+
+            question.record_result(true).unwrap();
+        }
+    }
+
+    #[test]
+    fn no_duplicates() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut rng = rand::thread_rng();
+        let mut session = Session::new();
+
+        let cards = cards(2);
+
+        let mut previous = None;
+        for _ in 0..1000 {
+            let question = session
+                .generate_question(&mut database, &cards, &mut rng)
+                .unwrap();
+            if let Some(previous) = previous {
+                assert_ne!(question.card_index(), previous);
+            }
+            previous = Some(question.card_index());
+
+            question.record_result(rng.gen()).unwrap();
+        }
+
+        assert!(previous.is_some());
+    }
+
+    #[test]
+    fn equal_distribution() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut rng = rand::thread_rng();
+        let mut session = Session::new();
+
+        let cards = cards(5);
+        let mut occurrences = (0..cards.len()).map(|_| 0).collect::<Vec<_>>();
+
+        const ITERATIONS: usize = 1000;
+        for _ in 0..ITERATIONS {
+            let question = session
+                .generate_question(&mut database, &cards, &mut rng)
+                .unwrap();
+            occurrences[question.card_index()] += 1;
+            question.record_result(true).unwrap();
+        }
+
+        let average = ITERATIONS / cards.len();
+        for occurrences in occurrences {
+            assert!(
+                ((average - 50)..(average + 50)).contains(&occurrences),
+                "{occurrences} is too far off {average}"
+            );
+        }
+    }
 }

@@ -459,7 +459,6 @@ dependencies = [
  "clap",
  "crossterm",
  "directories",
- "maplit",
  "rand",
  "revise-database",
  "revise-parser",
