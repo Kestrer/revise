@@ -8,11 +8,11 @@ description = "Utility for learning and revising"
 [dependencies]
 annotate-snippets = { version = "0.9.0", features = ["color"] }
 anyhow = "1.0.42"
-crossterm = "0.20.0"
-directories = "3.0.2"
+clap = { version = "3.1.14", features = ["derive"] }
+crossterm = "0.23.2"
+directories = "4.0.1"
 rand = "0.8.4"
 scopeguard = "1.1.0"
-structopt = "0.3.22"
 unicode-width = "0.1.8"
 thiserror = "1.0.26"
 

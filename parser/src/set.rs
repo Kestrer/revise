@@ -18,9 +18,11 @@ pub fn parse_set(input: &str) -> Result<Set, Vec<ParseError>> {
 
     let set = parse_set_inner(&mut cx);
 
-    if !cx.remaining.is_empty() {
-        panic!("Trailing characters: {:?}", cx.remaining);
-    }
+    assert!(
+        cx.remaining.is_empty(),
+        "Trailing characters: {:?}",
+        cx.remaining
+    );
 
     if errors.is_empty() {
         Ok(set)
@@ -61,13 +63,16 @@ impl<'a> ParseContext<'a, '_> {
 struct NoMatch;
 
 fn parse_set_inner(cx: &mut ParseContext<'_, '_>) -> Set {
-    while cx
-        .try_parse(|cx| {
+    loop {
+        let res = cx.try_parse(|cx| {
             parse_blank_line(cx);
             parse_newline(cx)
-        })
-        .is_ok()
-    {}
+        });
+
+        if res.is_err() {
+            break;
+        }
+    }
 
     let title = parse_title(cx);
 

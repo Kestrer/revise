@@ -8,8 +8,8 @@ use std::io::{self, Write};
 use std::mem;
 use std::path::{Path, PathBuf};
 
+use clap::Parser as _;
 use directories::ProjectDirs;
-use structopt::StructOpt;
 use thiserror::Error;
 
 use revise_database::{CardKey, Database, Knowledge};
@@ -24,31 +24,30 @@ use report::{Report, Source};
 
 mod report_parse_error;
 
-#[derive(StructOpt)]
-#[structopt(name = "revise", author = "Kestrer")]
-enum Opts {
+#[derive(clap::Parser)]
+enum Args {
     /// Learn all the cards in one or more sets.
     Learn {
         /// The sets to learn.
-        #[structopt(required = true)]
+        #[clap(required = true)]
         sets: Vec<PathBuf>,
 
         /// Whether to invert the terms and definitions.
-        #[structopt(short, long)]
+        #[clap(short, long)]
         invert: bool,
     },
 
     /// Check one or more sets syntactically, but don't learn anything.
     Check {
         /// The sets to check.
-        #[structopt(required = true)]
+        #[clap(required = true)]
         sets: Vec<PathBuf>,
     },
 
     /// Clear the recorded knowledge of all the cards in the given sets.
     Clear {
         /// The sets to clear all knowledge of.
-        #[structopt(required = true)]
+        #[clap(required = true)]
         sets: Vec<PathBuf>,
     },
 }
@@ -90,8 +89,8 @@ trait Reporter {
 }
 
 fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
-    match Opts::from_args() {
-        Opts::Learn { sets, invert } => {
+    match Args::parse() {
+        Args::Learn { sets, invert } => {
             let mut result = Ok(());
 
             let sets: Vec<_> = sets
@@ -124,7 +123,7 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
             learn::learn(&mut database, &title, &cards, &mut io::stdout().lock())
                 .map_err(|e| reporter.error_chain(&*e))?;
         }
-        Opts::Check { sets } => {
+        Args::Check { sets } => {
             let mut result = Ok(());
 
             for set in sets {
@@ -133,7 +132,7 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
 
             result?;
         }
-        Opts::Clear { sets } => {
+        Args::Clear { sets } => {
             let mut result = Ok(());
 
             let cards = sets

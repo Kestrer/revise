@@ -8,9 +8,11 @@ pub fn parse_guess(input: &str) -> BTreeSet<String> {
 
     let guess = parse_guess_inner(&mut cx);
 
-    if !cx.remaining.is_empty() {
-        panic!("Trailing characters: {:?}", cx.remaining);
-    }
+    assert!(
+        cx.remaining.is_empty(),
+        "Trailing characters: {:?}",
+        cx.remaining
+    );
 
     guess
 }
