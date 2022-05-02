@@ -209,22 +209,24 @@ impl<'cards> Session<'cards> {
         let card_level = rand::distributions::WeightedIndex::new(weights)
             .unwrap()
             .sample(rng);
-        let card_index = rng.gen_range(0..choosable_distribution[card_level]);
+        let card_number = rng.gen_range(0..choosable_distribution[card_level]);
 
-        let (card_index, (card_key, _)) = card_knowledges
+        let (_card_index, (card_key, _)) = card_knowledges
             .enumerate()
             .filter(|&(_, (card_key, knowledge))| {
                 Some(card_key) != self.previous_card && knowledge == card_level
             })
-            .nth(card_index)
+            .nth(card_number)
             .unwrap();
 
         self.previous_card = Some(card_key);
 
+        #[allow(clippy::used_underscore_binding)]
         Ok(Question {
             _session: PhantomData,
             database,
-            card_index,
+            #[cfg(test)]
+            card_index: _card_index,
             card_key,
             level_distribution,
         })
@@ -235,16 +237,13 @@ struct Question<'session, 'database, 'cards> {
     // a session should only support one question at once
     _session: PhantomData<&'session mut Session<'cards>>,
     database: &'database mut Database,
+    #[cfg(test)]
     card_index: usize,
     card_key: &'cards CardKey,
     level_distribution: [usize; 4],
 }
 
 impl<'session, 'database, 'cards> Question<'session, 'database, 'cards> {
-    fn card_index(&self) -> usize {
-        self.card_index
-    }
-
     fn card_key(&self) -> &'cards CardKey {
         self.card_key
     }
@@ -267,7 +266,6 @@ impl<'session, 'database, 'cards> Question<'session, 'database, 'cards> {
 mod tests {
     use std::collections::btree_set::BTreeSet;
 
-    use rand::rngs::mock::StepRng;
     use rand::Rng;
 
     use revise_database::{CardKey, Database};
@@ -293,30 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn deterministic() {
-        let mut database = Database::open_in_memory().unwrap();
-        let mut rng = StepRng::new(0, 15_701_263_798_120_398_361);
-        let mut session = Session::new();
-
-        let cards = cards(3);
-
-        for expected_index in [2, 1, 0, 2, 0, 1, 0, 2, 1, 0, 2] {
-            let question = session
-                .generate_question(&mut database, &cards, &mut rng)
-                .unwrap();
-
-            let chosen_index = cards
-                .iter()
-                .position(|card| card == question.card_key())
-                .unwrap();
-            assert_eq!(chosen_index, question.card_index());
-            assert_eq!(chosen_index, expected_index);
-
-            question.record_result(true).unwrap();
-        }
-    }
-
-    #[test]
     fn no_duplicates() {
         let mut database = Database::open_in_memory().unwrap();
         let mut rng = rand::thread_rng();
@@ -330,9 +304,9 @@ mod tests {
                 .generate_question(&mut database, &cards, &mut rng)
                 .unwrap();
             if let Some(previous) = previous {
-                assert_ne!(question.card_index(), previous);
+                assert_ne!(question.card_index, previous);
             }
-            previous = Some(question.card_index());
+            previous = Some(question.card_index);
 
             question.record_result(rng.gen()).unwrap();
         }
@@ -354,7 +328,7 @@ mod tests {
             let question = session
                 .generate_question(&mut database, &cards, &mut rng)
                 .unwrap();
-            occurrences[question.card_index()] += 1;
+            occurrences[question.card_index] += 1;
             question.record_result(true).unwrap();
         }
 
