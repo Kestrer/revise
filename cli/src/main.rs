@@ -7,7 +7,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
+use anyhow::Context as _;
 use clap::Parser as _;
 use directories::ProjectDirs;
 use thiserror::Error;
@@ -35,6 +37,10 @@ enum Args {
         /// Whether to invert the terms and definitions.
         #[clap(short, long)]
         invert: bool,
+
+        /// The weights to use for each knowledge category.
+        #[clap(short, long, default_value = "10,5,1,0.1")]
+        weights: Weights,
     },
 
     /// Check one or more sets syntactically, but don't learn anything.
@@ -94,7 +100,11 @@ trait Reporter {
 
 fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
     match Args::parse() {
-        Args::Learn { sets, invert } => {
+        Args::Learn {
+            sets,
+            invert,
+            weights,
+        } => {
             let mut result = Ok(());
 
             let sets: Vec<_> = sets
@@ -124,8 +134,14 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
             }
 
             let mut database = open_database().map_err(|e| reporter.error_chain(e))?;
-            learn::learn(&mut database, &title, &cards, &mut io::stdout().lock())
-                .map_err(|e| reporter.error_chain(&*e))?;
+            learn::learn(
+                &mut database,
+                &title,
+                &cards,
+                weights.0,
+                &mut io::stdout().lock(),
+            )
+            .map_err(|e| reporter.error_chain(&*e))?;
         }
         Args::Check { sets } => {
             let mut result = Ok(());
@@ -226,6 +242,47 @@ enum OpenDatabaseErrorInner {
     CreateDir { path: PathBuf, source: io::Error },
     #[error(transparent)]
     Open(revise_database::OpenError),
+}
+
+struct Weights([f64; 4]);
+impl FromStr for Weights {
+    type Err = anyhow::Error;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let mut parts = input.split(',');
+        let parts = (|| {
+            let array = [parts.next()?, parts.next()?, parts.next()?, parts.next()?];
+            if parts.next().is_some() {
+                return None;
+            }
+            Some(array)
+        })()
+        .context("expected 4 weights")?;
+
+        let [a, b, c, d] = parts.map(|s| s.trim().parse::<f64>());
+        let weights = [a?, b?, c?, d?];
+
+        anyhow::ensure!(
+            weights.iter().all(|&w| w.is_normal() || w == 0.0),
+            "all weights must be normal"
+        );
+        anyhow::ensure!(
+            weights.iter().sum::<f64>().is_normal(),
+            "weights must not sum to zero"
+        );
+
+        Ok(Self(weights))
+    }
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn test_weights() {
+    assert_eq!("0,0,0,1".parse::<Weights>().unwrap().0, [0., 0., 0., 1.]);
+    assert_eq!(
+        "\t2.5 , 6 , 8,0.001\n".parse::<Weights>().unwrap().0,
+        [2.5, 6., 8., 0.001]
+    );
 }
 
 fn record_err<T, U, E>(res: Result<T, E>, other: &mut Result<U, E>) -> Option<T> {

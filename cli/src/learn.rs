@@ -23,6 +23,7 @@ pub fn learn(
     database: &mut Database,
     title: &str,
     cards: &HashMap<CardKey, Card>,
+    knowledge_weights: [f64; 4],
     mut out: impl io::Write,
 ) -> anyhow::Result<()> {
     let mut rng = rand::thread_rng();
@@ -32,7 +33,8 @@ pub fn learn(
     let mut session = Session::new();
 
     loop {
-        let question = session.generate_question(database, cards.keys(), &mut rng)?;
+        let question =
+            session.generate_question(database, cards.keys(), knowledge_weights, &mut rng)?;
         let card = &cards[question.card_key()];
 
         queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
@@ -172,6 +174,7 @@ impl<'cards> Session<'cards> {
         &mut self,
         database: &'database mut Database,
         cards: C,
+        knowledge_weights: [f64; 4],
         rng: &mut R,
     ) -> anyhow::Result<Question<'_, 'database, 'cards>>
     where
@@ -200,11 +203,10 @@ impl<'cards> Session<'cards> {
             }
         }
 
-        const MULTIPLIERS: &[f64] = &[4.0, 3.0, 2.0, 1.0];
         #[allow(clippy::cast_precision_loss)]
         let weights = choosable_distribution
             .into_iter()
-            .zip(MULTIPLIERS)
+            .zip(knowledge_weights)
             .map(|(weight, multiplier)| (weight as f64) * multiplier);
         let card_level = rand::distributions::WeightedIndex::new(weights)
             .unwrap()
@@ -301,7 +303,7 @@ mod tests {
         let mut previous = None;
         for _ in 0..1000 {
             let question = session
-                .generate_question(&mut database, &cards, &mut rng)
+                .generate_question(&mut database, &cards, [1.0; 4], &mut rng)
                 .unwrap();
             if let Some(previous) = previous {
                 assert_ne!(question.card_index, previous);
@@ -326,7 +328,7 @@ mod tests {
         const ITERATIONS: usize = 1000;
         for _ in 0..ITERATIONS {
             let question = session
-                .generate_question(&mut database, &cards, &mut rng)
+                .generate_question(&mut database, &cards, [1.0; 4], &mut rng)
                 .unwrap();
             occurrences[question.card_index] += 1;
             question.record_result(true).unwrap();
