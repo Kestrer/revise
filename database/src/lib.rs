@@ -8,9 +8,11 @@
 )]
 
 use std::collections::{BTreeSet, HashMap};
+use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::str::FromStr;
 
 use bincode::Options as _;
 use rusqlite::types::ToSql;
@@ -479,3 +481,39 @@ impl KnowledgeLevel {
         self.0
     }
 }
+
+impl FromStr for KnowledgeLevel {
+    type Err = ParseKnowledgeLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "0" => Self(0),
+            "1" => Self(1),
+            "2" => Self(2),
+            "3" => Self(3),
+            _ => {
+                return Err(ParseKnowledgeLevelError {
+                    given: s.to_owned(),
+                })
+            }
+        })
+    }
+}
+
+/// An error parsing a [`KnowledgeLevel`].
+#[derive(Debug)]
+pub struct ParseKnowledgeLevelError {
+    given: String,
+}
+
+impl Display for ParseKnowledgeLevelError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid knowledge level {}; expected 0, 1, 2 or 3",
+            self.given
+        )
+    }
+}
+
+impl Error for ParseKnowledgeLevelError {}

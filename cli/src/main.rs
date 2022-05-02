@@ -12,7 +12,7 @@ use clap::Parser as _;
 use directories::ProjectDirs;
 use thiserror::Error;
 
-use revise_database::{CardKey, Database, Knowledge};
+use revise_database::{CardKey, Database, Knowledge, KnowledgeLevel};
 use revise_parser::Set;
 
 mod ui;
@@ -46,6 +46,10 @@ enum Args {
 
     /// Clear the recorded knowledge of all the cards in the given sets.
     Clear {
+        /// The level to clear the knowledge to.
+        #[clap(long, default_value = "0")]
+        level: KnowledgeLevel,
+
         /// The sets to clear all knowledge of.
         #[clap(required = true)]
         sets: Vec<PathBuf>,
@@ -132,7 +136,7 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
 
             result?;
         }
-        Args::Clear { sets } => {
+        Args::Clear { level, sets } => {
             let mut result = Ok(());
 
             let cards = sets
@@ -152,7 +156,13 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
 
             open_database()
                 .map_err(|e| reporter.error_chain(e))?
-                .set_knowledge_all(&cards, Knowledge::default())
+                .set_knowledge_all(
+                    &cards,
+                    Knowledge {
+                        level,
+                        safety_net: false,
+                    },
+                )
                 .map_err(|e| reporter.error_chain(e))?;
         }
     }
