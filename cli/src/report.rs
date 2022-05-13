@@ -1,6 +1,7 @@
 //! Error reporting, built on `annotate-snippets`.
 
 use std::borrow::{Borrow, Cow};
+use std::cmp;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::ops::Range;
@@ -84,20 +85,25 @@ impl Display for Report<'_> {
                     let (context, context_line_start) =
                         context_to(min_start..max_end, &section.source.text);
 
+                    let contextual_source = &section.source.text[context.clone()];
+
                     snippet::Slice {
                         origin: section.source.origin.as_deref(),
-                        source: &section.source.text[context.clone()],
+                        source: contextual_source,
                         line_start: context_line_start,
                         annotations: section
                             .labels
                             .iter()
-                            .map(|label| snippet::SourceAnnotation {
-                                range: (
-                                    label.span.start - context.start,
-                                    label.span.end - context.start,
-                                ),
-                                label: &label.annotation.message,
-                                annotation_type: label.annotation.annotation_type,
+                            .map(|label| {
+                                let start = label.span.start - context.start;
+                                let end = label.span.end - context.start;
+                                let start = bytes_to_chars(contextual_source, start);
+                                let end = bytes_to_chars(contextual_source, end);
+                                snippet::SourceAnnotation {
+                                    range: (start, end),
+                                    label: &label.annotation.message,
+                                    annotation_type: label.annotation.annotation_type,
+                                }
                             })
                             .collect(),
                         fold: section.fold,
@@ -249,6 +255,20 @@ fn offset_of(needle: &str, source: &str) -> usize {
         .unwrap();
     assert!(offset <= source.len());
     offset
+}
+
+fn bytes_to_chars(s: &str, bytes: usize) -> usize {
+    match bytes.cmp(&s.len()) {
+        cmp::Ordering::Less => {
+            s.char_indices()
+                .enumerate()
+                .find(|(_, (i, _))| *i == bytes)
+                .unwrap()
+                .0
+        }
+        cmp::Ordering::Equal => s.chars().count(),
+        cmp::Ordering::Greater => panic!("bytes > s.len() ({} > {})", bytes, s.len()),
+    }
 }
 
 macro_rules! error {
