@@ -274,7 +274,10 @@ impl FromStr for Weights {
 #[test]
 #[allow(clippy::float_cmp)]
 fn test_weights() {
-    assert_eq!("0,0,0,1".parse::<Weights>().unwrap().0, [0., 0., 0., 1.]);
+    assert_eq!(
+        "0.1,0.1,0.1,1".parse::<Weights>().unwrap().0,
+        [0.1, 0.1, 0.1, 1.]
+    );
     assert_eq!(
         "\t2.5 , 6 , 8,0.001\n".parse::<Weights>().unwrap().0,
         [2.5, 6., 8., 0.001]

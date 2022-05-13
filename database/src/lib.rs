@@ -345,7 +345,7 @@ fn test_database() {
         }
 
         #[allow(clippy::cast_sign_loss)]
-        for level in (-5_i8..=3).rev() {
+        for level in (-5_i8..=2).rev() {
             db.record_incorrect(card).unwrap();
             let knowledge = db.knowledge(card).unwrap();
             assert_eq!(knowledge.level.get(), std::cmp::max(level, 0) as u8);
