@@ -49,7 +49,7 @@ impl<'a> Report<'a> {
 
         let mut parent: &dyn Error = &error;
         while let Some(source) = parent.source() {
-            this = this.with_footer(Annotation::note(format!("caused by: {}", source)));
+            this = this.with_footer(Annotation::note(format!("caused by: {source}")));
             parent = source;
         }
 
@@ -124,7 +124,7 @@ impl Display for Report<'_> {
                 ..FormatOptions::default()
             },
         });
-        writeln!(f, "{}", display_list)
+        writeln!(f, "{display_list}")
     }
 }
 
@@ -176,6 +176,7 @@ impl<'a> Section<'a> {
         self
     }
     pub fn label_all(self, annotation: Annotation<'a>) -> Self {
+        #[allow(clippy::bool_to_int_with_if)]
         let span_end = self.source.text.len()
             - if self.source.text.ends_with("\r\n") {
                 2

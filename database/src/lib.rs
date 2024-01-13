@@ -402,7 +402,7 @@ fn test_database() {
 }
 
 /// A unique key that every card has.
-#[allow(clippy::derive_hash_xor_eq)]
+#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Eq, Hash)]
 pub struct CardKey(Vec<u8>);
 

@@ -17,9 +17,8 @@ pub(crate) fn read_line(mut out: impl io::Write) -> io::Result<Option<String>> {
     let mut position = 0;
 
     loop {
-        let key_event = match read_key()? {
-            Some(key) => key,
-            None => return Ok(None),
+        let Some(key_event) = read_key()? else {
+            return Ok(None);
         };
         match (key_event.code, key_event.modifiers) {
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {

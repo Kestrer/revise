@@ -183,13 +183,14 @@ fn parse_title(cx: &mut ParseContext<'_, '_>) -> String {
 }
 
 #[test]
+#[rustfmt::skip]
 fn test_parse_title() {
     let parse = |input| run_parser(|cx| Ok(parse_title(cx)), input).unwrap();
 
-    assert_eq!(parse(""), ("".into(), "", vec![no_title(0..0)]));
-    assert_eq!(parse(" "), ("".into(), "", vec![no_title(0..1)]));
-    assert_eq!(parse("  #foo"), ("".into(), "", vec![no_title(0..2)]));
-    assert_eq!(parse("  #foo\n"), ("".into(), "\n", vec![no_title(0..2)]));
+    assert_eq!(parse(""), (String::new(), "", vec![no_title(0..0)]));
+    assert_eq!(parse(" "), (String::new(), "", vec![no_title(0..1)]));
+    assert_eq!(parse("  #foo"), (String::new(), "", vec![no_title(0..2)]));
+    assert_eq!(parse("  #foo\n"), (String::new(), "\n", vec![no_title(0..2)]));
     assert_eq!(parse("x\r\n"), ("x".into(), "\r\n", vec![]));
     assert_eq!(parse("   title  "), ("title".into(), "", vec![]));
 }
@@ -997,5 +998,5 @@ mod test_utils {
     pub(crate) use card;
 }
 #[cfg(test)]
-#[allow(clippy::wildcard_imports)]
+#[allow(clippy::wildcard_imports, clippy::items_after_test_module)]
 use test_utils::*;

@@ -51,7 +51,7 @@ pub fn learn(
         )?;
         let separator = "─".dim();
         for _ in 0..terminal::size()?.0 {
-            write!(out, "{}", separator)?;
+            write!(out, "{separator}")?;
         }
         write!(out, "\r\n\r\n")?;
 
@@ -82,9 +82,8 @@ pub fn learn(
             write!(out, "Override (c)orrect or continue: ")?;
             out.flush()?;
 
-            let key = match crate::ui::read_key()? {
-                Some(key) => key,
-                None => break,
+            let Some(key) = crate::ui::read_key()? else {
+                break;
             };
 
             if key.code == KeyCode::Char('c') {
@@ -151,7 +150,7 @@ impl Display for DisplayAnswer<'_> {
         let mut answers = self.0.iter();
         f.write_str(answers.next().unwrap())?;
         for answer in answers {
-            write!(f, ", {}", answer)?;
+            write!(f, ", {answer}")?;
         }
         Ok(())
     }

@@ -38,6 +38,10 @@ enum Args {
         #[clap(short, long)]
         invert: bool,
 
+        /// Whether to clear all recorded knowledge before starting.
+        #[clap(short, long)]
+        clear: bool,
+
         /// The weights to use for each knowledge category.
         #[clap(short, long, default_value = "10,5,1,0.1")]
         weights: Weights,
@@ -71,9 +75,9 @@ fn main() {
         fn report(&mut self, report: Report<'_>) {
             drop(if self.first_report {
                 self.first_report = false;
-                write!(self.stderr, "{}", report)
+                write!(self.stderr, "{report}")
             } else {
-                write!(self.stderr, "\n{}", report)
+                write!(self.stderr, "\n{report}")
             });
         }
     }
@@ -103,6 +107,7 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
         Args::Learn {
             sets,
             invert,
+            clear,
             weights,
         } => {
             let mut result = Ok(());
@@ -134,6 +139,11 @@ fn try_main(reporter: &mut impl Reporter) -> Result<(), ()> {
             }
 
             let mut database = open_database().map_err(|e| reporter.error_chain(e))?;
+            if clear {
+                database
+                    .set_knowledge_all(cards.keys(), Knowledge::default())
+                    .map_err(|e| reporter.error_chain(&e))?;
+            }
             learn::learn(
                 &mut database,
                 &title,

@@ -128,7 +128,7 @@ fn trailing_option_chars(source: &Source, span: Range<usize>) -> Report<'_> {
 }
 
 fn unknown_escape(source: &Source, escape: char, span: Range<usize>) -> Report<'_> {
-    let msg = format!("unknown escape sequence \\{}", escape);
+    let msg = format!("unknown escape sequence \\{escape}");
     Report::error(msg.clone())
         .with_section(source.label(span, Annotation::error(msg)))
         .with_footer(Annotation::help("known escape sequences are \\\" and \\\\"))
@@ -143,8 +143,7 @@ fn unexpected_control_char(source: &Source, character: char, span: Range<usize>)
     Report::error("unexpected control character").with_section(source.label(
         span,
         Annotation::error(format!(
-            "the control character {:?} is not allowed here",
-            character
+            "the control character {character:?} is not allowed here",
         )),
     ))
 }
@@ -153,8 +152,7 @@ fn expected_space(source: &Source, character: char, span: Range<usize>) -> Repor
     Report::error("expected space character").with_section(source.label(
         span,
         Annotation::help(format!(
-            "the whitespace character {:?} looks like a space, but is not",
-            character
+            "the whitespace character {character:?} looks like a space, but is not",
         )),
     ))
 }
